@@ -37,7 +37,7 @@ pub struct LFShardBuf<T> {
     inner_rb: Box<[CachePadded<InnerRingBuffer<T>>]>,
 }
 
-// 
+//
 #[derive(Debug)]
 struct ShardJob {
     occupied: AtomicBool,   // occupied status of shard
@@ -120,16 +120,16 @@ impl<T: Debug> LFShardBuf<T> {
     /// self.shard_jobs for enqueuing or dequeuing purposes. It iterates
     /// in a ring buffer like manner per thread to give each shard equal weight.
     /// Yielding is done through exponential backoff + random jitter
-    /// (capped at 20 ms) so that this function isn't fully occupying the CPU at 
+    /// (capped at 20 ms) so that this function isn't fully occupying the CPU at
     /// all times.
     ///
     /// Time Complexity: O(s_t) where s_t comes from the consideration below:
-    /// 
+    ///
     /// The time complexity of this depends on number of enquerer and
-    /// dequerer threads there are and shard count; ideally, you would have similar 
+    /// dequerer threads there are and shard count; ideally, you would have similar
     /// number of enquerer and dequerer threads with the number of shards being
-    /// greater than or equal to max(enquerer thread count, dequeurer thread count) 
-    /// so that each thread can find a shard to enqueue or dequeue off from 
+    /// greater than or equal to max(enquerer thread count, dequeurer thread count)
+    /// so that each thread can find a shard to enqueue or dequeue off from
     ///
     /// Space Complexity: O(1)
     async fn acquire_shard(&self, acquire: Acquire) -> usize {
@@ -224,7 +224,7 @@ impl<T: Debug> LFShardBuf<T> {
     /// Adds an item of type T to the RingBuffer, *blocking* the thread until there is space to add the item.
     ///
     /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
-    /// 
+    ///
     /// Space complexity: O(1)
     pub async fn enqueue(&self, item: T) {
         self.enqueue_item(Some(item)).await;
@@ -489,7 +489,7 @@ impl<T: Debug> LFShardBuf<T> {
     ///
     /// Space Complexity: O(T_s)
     ///
-    /// Where O(T_t) and O(T_s) is the time and space complexity required to 
+    /// Where O(T_t) and O(T_s) is the time and space complexity required to
     /// clone the internals of the T object itself and s_t is the time it takes
     /// to acquire the shard
     pub async fn get_item_in_shard(&self, item_index: usize, shard_ind: usize) -> Option<T>
