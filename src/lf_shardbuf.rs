@@ -1,7 +1,8 @@
+use crate::task_local_spawn::{get_shard_ind, set_shard_ind};
 use crossbeam_utils::CachePadded;
 use fastrand::usize as frand;
 use std::{
-    cell::{Cell, RefCell, UnsafeCell},
+    cell::{Cell, UnsafeCell},
     fmt::Debug,
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
@@ -14,11 +15,7 @@ use std::{
 enum Acquire {
     Enqueue,
     Dequeue,
-}
-
-// Each thread will own its own shard index
-thread_local! {
-    static SHARD_INDEX: std::cell::RefCell<Option<usize>> = RefCell::new(None);
+    Poison,
 }
 
 /// A sharded ring (circular) buffer struct that can only be used in a *multi-threaded environment*,
@@ -26,6 +23,7 @@ thread_local! {
 /// See the [Wikipedia article](https://en.wikipedia.org/wiki/Circular_buffer) for more info.
 #[derive(Debug)]
 pub struct LFShardBuf<T> {
+    #[warn(dead_code)]
     capacity: usize,
     shards: usize,
     max_capacity_per_shard: usize,
@@ -79,7 +77,7 @@ impl<T> InnerRingBuffer<T> {
     }
 }
 
-impl<T: Debug> LFShardBuf<T> {
+impl<T> LFShardBuf<T> {
     /// Instantiates the LFShardBuf.
     ///
     /// Note: The capacity of this buffer will always be rounded up to
@@ -133,17 +131,28 @@ impl<T: Debug> LFShardBuf<T> {
     ///
     /// Space Complexity: O(1)
     async fn acquire_shard(&self, acquire: Acquire) -> usize {
-        // Threads start off with a random shard_ind value before going
+        // Threads start off with a random shard_ind or
+        // user provided initial shard ind value (+ 1) before going
         // around a circle in the ring buffer
-        let mut current = SHARD_INDEX.with(|cell| {
-            let mut cell_val = cell.borrow_mut();
-            let current = match *cell_val {
-                Some(val) => (val + 1) % self.shards, // look at the next shard
-                None => frand(0..self.shards),        // init rand shard for thread to look at
-            };
-            *cell_val = Some(current);
-            current
-        });
+        // If it's a poison task, then it will go try to find
+        // a shard to just enqueue a None item in there
+        let mut current = match acquire {
+            Acquire::Poison => 0,
+            _ => {
+                match get_shard_ind() {
+                    Some(val) => {
+                        let val = (val + 1) % self.shards;
+                        set_shard_ind(val);
+                        val
+                    } // look at the next shard
+                    None => {
+                        let val = frand(0..self.shards);
+                        set_shard_ind(val);
+                        val
+                    } // init rand shard for thread to look at
+                }
+            }
+        };
 
         let mut spins = 0;
         let mut attempt: i32 = 0;
@@ -156,14 +165,23 @@ impl<T: Debug> LFShardBuf<T> {
             {
                 if match acquire {
                     Acquire::Enqueue => {
-                        let shard_full = self.is_shard_full(current);
-                        !shard_full
+                        // let shard_full = self.is_shard_full(current);
+                        // !shard_full
+                        !self.is_shard_full(current)
                     }
                     Acquire::Dequeue => {
-                        let shard_empty = self.is_shard_empty(current);
-                        !shard_empty
+                        // let shard_empty = self.is_shard_empty(current);
+                        // !shard_empty
+                        !self.is_shard_empty(current)
                     }
+                    Acquire::Poison => !self.is_shard_full(current),
                 } {
+                    if acquire != Acquire::Poison {
+                        // make sure that the shard index value is set to the
+                        // next index it should look at instead of starting
+                        // from its previous state
+                        set_shard_ind((current + 1) % self.shards);
+                    }
                     break;
                 } else {
                     self.shard_jobs[current]
@@ -198,7 +216,10 @@ impl<T: Debug> LFShardBuf<T> {
     /// Space Complexity: O(1)
     async fn enqueue_item(&self, item: Option<T>) {
         // acquire shard
-        let current = self.acquire_shard(Acquire::Enqueue).await;
+        let current = match item {
+            Some(_) => self.acquire_shard(Acquire::Enqueue).await,
+            None => self.acquire_shard(Acquire::Poison).await,
+        };
 
         // Grab inner ring buffer shard, enqueue the item, update the enqueue index
         let inner = &self.inner_rb[current];
@@ -698,6 +719,12 @@ impl<T: Debug> LFShardBuf<T> {
 }
 
 // Both InnerRingBuffer and LFShardBuf should be safe for
-// Sync traits
+// Sync + Send traits
 unsafe impl<T: Send> Sync for InnerRingBuffer<T> {}
 unsafe impl<T: Send> Sync for LFShardBuf<T> {}
+unsafe impl<T: Send> Send for InnerRingBuffer<T> {}
+unsafe impl<T: Send> Send for LFShardBuf<T> {}
+// unsafe impl<T: Send> Send for InnerRingBuffer<T> {}
+// unsafe impl<T: Send> Send for *const LFShardBuf<T> {}
+// unsafe impl Send for ThreadShardIndex {}
+// unsafe impl Sync for ThreadShardIndex {}
