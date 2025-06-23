@@ -77,8 +77,6 @@ fn rb_benchmark(c: &mut Criterion) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .worker_threads(MAX_THREADS)
-        // .worker_threads(1)
-        // .worker_threads(20)
         .build()
         .unwrap();
 
