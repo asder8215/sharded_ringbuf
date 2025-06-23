@@ -7,9 +7,16 @@ use std::{
 };
 use tokio::sync::Barrier as AsyncBarrier;
 
+// comparing the benchmarking to
+// https://github.com/fereidani/rust-channel-benchmarks/tree/main?tab=readme-ov-file
 const MAX_SHARDS: usize = 100;
+const MAX_TASKS: usize = 4;
+// const MAX_THREADS: usize = 16;
 const MAX_THREADS: usize = 8;
-const CAPACITY: usize = 100000;
+// const CAPACITY: usize = (1 << 20) / (MAX_THREADS/2) * 2;
+const CAPACITY: usize = 1000000;
+// const ITEM_PER_TASK: usize = (1 << 20) / (MAX_THREADS/2);
+const ITEM_PER_TASK: usize = 250000;
 
 async fn benchmark_lock_free_sharded_buffer(capacity: usize) {
     let max_items: usize = capacity;
@@ -18,19 +25,19 @@ async fn benchmark_lock_free_sharded_buffer(capacity: usize) {
 
     // barrier used to make sure all tasks are operating at the same time
     // so that threads are all assigned a task at once
-    let barrier = Arc::new(AsyncBarrier::new(MAX_THREADS * 2));
+    let barrier = Arc::new(AsyncBarrier::new(MAX_TASKS * 2));
 
-    let mut deq_threads = Vec::with_capacity(MAX_THREADS);
-    let mut enq_threads = Vec::with_capacity(MAX_THREADS);
+    let mut deq_threads = Vec::with_capacity(MAX_TASKS);
+    let mut enq_threads = Vec::with_capacity(MAX_TASKS);
 
     // spawn deq tasks
-    for _ in 0..MAX_THREADS {
+    for _ in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
         let handler: tokio::task::JoinHandle<usize> = spawn_with_shard_index(None, async move {
             barrier.wait().await;
             let mut counter: usize = 0;
-            for _i in 0..max_items {
+            for _i in 0..ITEM_PER_TASK {
                 let item = rb.dequeue().await;
                 match item {
                     Some(_) => counter += 1,
@@ -43,13 +50,13 @@ async fn benchmark_lock_free_sharded_buffer(capacity: usize) {
     }
 
     // spawn enq tasks
-    for _ in 0..MAX_THREADS {
+    for _ in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
         let handler: tokio::task::JoinHandle<()> = spawn_with_shard_index(None, async move {
             barrier.wait().await;
-            for _i in 0..max_items {
-                rb.enqueue(20).await;
+            for i in 0..ITEM_PER_TASK {
+                rb.enqueue(i).await;
             }
         });
         enq_threads.push(handler);
@@ -69,8 +76,9 @@ async fn benchmark_lock_free_sharded_buffer(capacity: usize) {
 fn rb_benchmark(c: &mut Criterion) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .worker_threads(MAX_THREADS * 2)
+        .worker_threads(MAX_THREADS)
         // .worker_threads(1)
+        // .worker_threads(20)
         .build()
         .unwrap();
 
