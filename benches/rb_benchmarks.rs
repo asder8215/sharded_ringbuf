@@ -14,23 +14,24 @@ const CAPACITY: usize = 100000;
 async fn benchmark_lock_free_sharded_buffer(capacity: usize) {
     let max_items: usize = capacity;
 
-    let smtrb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(max_items, MAX_SHARDS));
+    let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(max_items, MAX_SHARDS));
 
-    // barrier used to make sure all threads are operating at the same time
+    // barrier used to make sure all tasks are operating at the same time
+    // so that threads are all assigned a task at once
     let barrier = Arc::new(AsyncBarrier::new(MAX_THREADS * 2));
 
     let mut deq_threads = Vec::with_capacity(MAX_THREADS);
     let mut enq_threads = Vec::with_capacity(MAX_THREADS);
 
-    // spawn deq threads
+    // spawn deq tasks
     for _ in 0..MAX_THREADS {
-        let smtrb = Arc::clone(&smtrb);
+        let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
         let handler: tokio::task::JoinHandle<usize> = spawn_with_shard_index(None, async move {
             barrier.wait().await;
             let mut counter: usize = 0;
             for _i in 0..max_items {
-                let item = smtrb.dequeue().await;
+                let item = rb.dequeue().await;
                 match item {
                     Some(_) => counter += 1,
                     None => break,
@@ -41,14 +42,14 @@ async fn benchmark_lock_free_sharded_buffer(capacity: usize) {
         deq_threads.push(handler);
     }
 
-    // spawn enq threads
+    // spawn enq tasks
     for _ in 0..MAX_THREADS {
-        let smtrb = Arc::clone(&smtrb);
+        let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
         let handler: tokio::task::JoinHandle<()> = spawn_with_shard_index(None, async move {
             barrier.wait().await;
             for _i in 0..max_items {
-                smtrb.enqueue(20).await;
+                rb.enqueue(20).await;
             }
         });
         enq_threads.push(handler);
@@ -67,9 +68,9 @@ async fn benchmark_lock_free_sharded_buffer(capacity: usize) {
 
 fn rb_benchmark(c: &mut Criterion) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
-        // .max_blocking_threads(MAX_THREADS * 2)
         .enable_all()
         .worker_threads(MAX_THREADS * 2)
+        // .worker_threads(1)
         .build()
         .unwrap();
 

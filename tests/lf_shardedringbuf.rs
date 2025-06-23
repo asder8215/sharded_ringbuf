@@ -4,7 +4,8 @@ use std::sync::Arc;
 use tokio::sync::Barrier as AsyncBarrier;
 
 #[tokio::test]
-// SPMC test case
+// #[tokio::test(flavor = "current_thread")]
+// Single threaded test case
 async fn test_counter() {
     const MAX_ITEMS: usize = 100;
     const MAX_SHARDS: usize = 10;
@@ -13,7 +14,7 @@ async fn test_counter() {
     let mut deq_threads = Vec::with_capacity(MAX_THREADS.try_into().unwrap());
     let mut enq_threads = Vec::new();
 
-    // Spawn MAX_THREADS dequerer threads
+    // Spawn MAX_THREADS dequerer *tasks*
     for _ in 0..MAX_THREADS {
         let rb = Arc::clone(&rb);
         let handler = spawn_with_shard_index(None, async move {
@@ -31,7 +32,7 @@ async fn test_counter() {
         deq_threads.push(handler);
     }
 
-    // Just spawn a single enquerer thread
+    // Just spawn a single enquerer task
     {
         let rb = Arc::clone(&rb);
         let enq_handler = spawn_with_shard_index(None, async move {
@@ -74,7 +75,7 @@ async fn benchmark_lock_free_sharded_buffer() {
     let mut deq_threads = Vec::with_capacity(MAX_THREADS);
     let mut enq_threads = Vec::with_capacity(MAX_THREADS);
 
-    // spawn deq threads
+    // spawn deq tasks
     for _ in 0..MAX_THREADS {
         let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
@@ -93,7 +94,7 @@ async fn benchmark_lock_free_sharded_buffer() {
         deq_threads.push(handler);
     }
 
-    // spawn enq threads
+    // spawn enq tasks
     for _ in 0..MAX_THREADS {
         let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);

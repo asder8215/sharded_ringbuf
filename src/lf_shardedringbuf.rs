@@ -35,7 +35,6 @@ pub struct LFShardedRingBuf<T> {
     inner_rb: Box<[CachePadded<InnerRingBuffer<T>>]>,
 }
 
-//
 #[derive(Debug)]
 struct ShardJob {
     occupied: AtomicBool,   // occupied status of shard
@@ -131,11 +130,15 @@ impl<T> LFShardedRingBuf<T> {
     ///
     /// Space Complexity: O(1)
     async fn acquire_shard(&self, acquire: Acquire) -> usize {
-        // Threads start off with a random shard_ind or
-        // user provided initial shard ind value (+ 1) before going
-        // around a circle in the ring buffer
-        // If it's a poison task, then it will go try to find
-        // a shard to just enqueue a None item in there
+        /*  
+         * Threads start off with a random shard_ind or
+         * user provided initial shard ind value (+ 1 % self.shards) 
+         * before going around a circle in the ring buffer
+         * Fortunately no funny games can be played with SHARD_INDEX
+         * because of the % self.shards ;)
+         * If it's a poison task, then it will go try to find
+         * a shard to just enqueue a None item in there
+        */
         let mut current = match acquire {
             Acquire::Poison => 0,
             _ => {
@@ -719,12 +722,6 @@ impl<T> LFShardedRingBuf<T> {
 }
 
 // Both InnerRingBuffer and LFShardedRingBuf should be safe for
-// Sync + Send traits
+// Sync traits
 unsafe impl<T: Send> Sync for InnerRingBuffer<T> {}
 unsafe impl<T: Send> Sync for LFShardedRingBuf<T> {}
-unsafe impl<T: Send> Send for InnerRingBuffer<T> {}
-unsafe impl<T: Send> Send for LFShardedRingBuf<T> {}
-// unsafe impl<T: Send> Send for InnerRingBuffer<T> {}
-// unsafe impl<T: Send> Send for *const LFShardedRingBuf<T> {}
-// unsafe impl Send for ThreadShardIndex {}
-// unsafe impl Sync for ThreadShardIndex {}
