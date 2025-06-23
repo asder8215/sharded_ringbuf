@@ -1,5 +1,5 @@
-use lf_shardbuf::LFShardBuf;
-use lf_shardbuf::spawn_with_shard_index;
+use lf_shardedringbuf::LFShardedRingBuf;
+use lf_shardedringbuf::spawn_with_shard_index;
 use std::sync::Arc;
 use tokio::sync::Barrier as AsyncBarrier;
 
@@ -9,7 +9,7 @@ async fn test_counter() {
     const MAX_ITEMS: usize = 100;
     const MAX_SHARDS: usize = 10;
     const MAX_THREADS: usize = 5;
-    let rb: Arc<LFShardBuf<usize>> = Arc::new(LFShardBuf::new(MAX_ITEMS, MAX_SHARDS));
+    let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
     let mut deq_threads = Vec::with_capacity(MAX_THREADS.try_into().unwrap());
     let mut enq_threads = Vec::new();
 
@@ -66,7 +66,7 @@ async fn benchmark_lock_free_sharded_buffer() {
     const MAX_THREADS: usize = 8;
     const CAPACITY: usize = 100000;
 
-    let smtrb: Arc<LFShardBuf<usize>> = Arc::new(LFShardBuf::new(CAPACITY, MAX_SHARDS));
+    let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(CAPACITY, MAX_SHARDS));
 
     // barrier used to make sure all threads are operating at the same time
     let barrier = Arc::new(AsyncBarrier::new(MAX_THREADS * 2));
@@ -76,13 +76,13 @@ async fn benchmark_lock_free_sharded_buffer() {
 
     // spawn deq threads
     for _ in 0..MAX_THREADS {
-        let smtrb = Arc::clone(&smtrb);
+        let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
         let handler: tokio::task::JoinHandle<usize> = spawn_with_shard_index(None, async move {
             barrier.wait().await;
             let mut counter: usize = 0;
             for _i in 0..CAPACITY {
-                let item = smtrb.dequeue().await;
+                let item = rb.dequeue().await;
                 match item {
                     Some(_) => counter += 1,
                     None => break,
@@ -95,12 +95,12 @@ async fn benchmark_lock_free_sharded_buffer() {
 
     // spawn enq threads
     for _ in 0..MAX_THREADS {
-        let smtrb = Arc::clone(&smtrb);
+        let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
         let handler: tokio::task::JoinHandle<()> = spawn_with_shard_index(None, async move {
             barrier.wait().await;
             for _i in 0..CAPACITY {
-                smtrb.enqueue(20).await;
+                rb.enqueue(20).await;
             }
         });
         enq_threads.push(handler);

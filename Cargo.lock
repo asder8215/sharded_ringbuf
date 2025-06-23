@@ -347,7 +347,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "lf-shardbuf"
+name = "lf-shardedringbuf"
 version = "0.1.0"
 dependencies = [
  "criterion",

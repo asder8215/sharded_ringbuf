@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use lf_shardbuf::{LFShardBuf, spawn_with_shard_index};
+use lf_shardedringbuf::{LFShardedRingBuf, spawn_with_shard_index};
 use std::{
     sync::{Arc, Barrier, Mutex},
     thread,
@@ -14,7 +14,7 @@ const CAPACITY: usize = 100000;
 async fn benchmark_lock_free_sharded_buffer(capacity: usize) {
     let max_items: usize = capacity;
 
-    let smtrb: Arc<LFShardBuf<usize>> = Arc::new(LFShardBuf::new(max_items, MAX_SHARDS));
+    let smtrb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(max_items, MAX_SHARDS));
 
     // barrier used to make sure all threads are operating at the same time
     let barrier = Arc::new(AsyncBarrier::new(MAX_THREADS * 2));

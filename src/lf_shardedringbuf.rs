@@ -22,7 +22,7 @@ enum Acquire {
 /// using a [BoxedSlice] of CachePadded<InnerRingBuffers> under the hood.
 /// See the [Wikipedia article](https://en.wikipedia.org/wiki/Circular_buffer) for more info.
 #[derive(Debug)]
-pub struct LFShardBuf<T> {
+pub struct LFShardedRingBuf<T> {
     #[warn(dead_code)]
     capacity: usize,
     shards: usize,
@@ -42,7 +42,7 @@ struct ShardJob {
     job_count: Cell<usize>, // how many jobs are in shard
 }
 
-// An inner ring buffer to contain the items, enqueue, and dequeue index for LFShardBuf struct
+// An inner ring buffer to contain the items, enqueue, and dequeue index for LFShardedRingBuf struct
 #[derive(Debug, Default)]
 struct InnerRingBuffer<T> {
     items: Box<[UnsafeCell<Option<T>>]>,
@@ -77,8 +77,8 @@ impl<T> InnerRingBuffer<T> {
     }
 }
 
-impl<T> LFShardBuf<T> {
-    /// Instantiates the LFShardBuf.
+impl<T> LFShardedRingBuf<T> {
+    /// Instantiates the LFShardedRingBuf.
     ///
     /// Note: The capacity of this buffer will always be rounded up to
     /// the next positive integer that is divisible by the provided shards.
@@ -290,7 +290,7 @@ impl<T> LFShardBuf<T> {
         let _ = self.enqueue_item(None).await;
     }
 
-    /// Clears the LFShardBuf back to an empty state.
+    /// Clears the LFShardedRingBuf back to an empty state.
     ///
     /// To clear the RingBuffer *only* when it is *poisoned*, see [Self::clear_poison].
     ///
@@ -339,7 +339,7 @@ impl<T> LFShardBuf<T> {
         }
     }
 
-    /// Checks whether the LFShardBuf is empty or not
+    /// Checks whether the LFShardedRingBuf is empty or not
     ///
     /// Time Complexity: O(s * s_t) where s_t is how long it takes to acquire shard(s)
     ///
@@ -381,7 +381,7 @@ impl<T> LFShardBuf<T> {
         return self.shard_jobs[shard_ind].job_count.get() == 0;
     }
 
-    /// Checks whether the LFShardBuf is full or not
+    /// Checks whether the LFShardedRingBuf is full or not
     ///
     /// Time Complexity: O(s * s_t) where s_t is how long it takes to acquire shard(s)
     ///
@@ -423,7 +423,7 @@ impl<T> LFShardBuf<T> {
         return self.shard_jobs[shard_ind].job_count.get() == self.max_capacity_per_shard;
     }
 
-    /// Checks the next enqueue index within the LFShardBuf
+    /// Checks the next enqueue index within the LFShardedRingBuf
     ///
     /// Time Complexity: O(s_t) where s_t is how long it takes to acquire a shard
     ///
@@ -463,7 +463,7 @@ impl<T> LFShardBuf<T> {
         return Some(enq_ind);
     }
 
-    /// Checks the next dequeue index within the LFShardBuf
+    /// Checks the next dequeue index within the LFShardedRingBuf
     ///
     /// Time Complexity: O(s_t) where s_t is how long it takes to acquire a shard
     ///
@@ -502,7 +502,7 @@ impl<T> LFShardBuf<T> {
         return Some(deq_ind);
     }
 
-    /// Returns a clone of the item within the LFShardBuf
+    /// Returns a clone of the item within the LFShardedRingBuf
     ///
     /// The T object inside the ring buffer *must* implement the Clone trait
     ///
@@ -611,7 +611,7 @@ impl<T> LFShardBuf<T> {
         return Some(items);
     }
 
-    /// Returns a clone of the LFShardBuf in its current state
+    /// Returns a clone of the LFShardedRingBuf in its current state
     ///
     /// The T object inside the ring buffer *must* implement the Clone trait
     ///
@@ -669,7 +669,7 @@ impl<T> LFShardBuf<T> {
         return vec.into_boxed_slice();
     }
 
-    /// Print out the content inside the LFShardBuf
+    /// Print out the content inside the LFShardedRingBuf
     ///
     /// Time Complexity: O(s * c_s * s_t) where s is the num of shards,
     /// c_s is the capacity per shard, and s_t is how long it takes to
@@ -718,13 +718,13 @@ impl<T> LFShardBuf<T> {
     }
 }
 
-// Both InnerRingBuffer and LFShardBuf should be safe for
+// Both InnerRingBuffer and LFShardedRingBuf should be safe for
 // Sync + Send traits
 unsafe impl<T: Send> Sync for InnerRingBuffer<T> {}
-unsafe impl<T: Send> Sync for LFShardBuf<T> {}
+unsafe impl<T: Send> Sync for LFShardedRingBuf<T> {}
 unsafe impl<T: Send> Send for InnerRingBuffer<T> {}
-unsafe impl<T: Send> Send for LFShardBuf<T> {}
+unsafe impl<T: Send> Send for LFShardedRingBuf<T> {}
 // unsafe impl<T: Send> Send for InnerRingBuffer<T> {}
-// unsafe impl<T: Send> Send for *const LFShardBuf<T> {}
+// unsafe impl<T: Send> Send for *const LFShardedRingBuf<T> {}
 // unsafe impl Send for ThreadShardIndex {}
 // unsafe impl Sync for ThreadShardIndex {}
