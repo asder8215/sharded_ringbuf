@@ -16,10 +16,31 @@ Benchmarking was performed in a similar style to [Rust Channel Benchmarks](https
 * Total capacity of the buffer is 1,000,000 entries
 * Varying shards value I experimented on starting (8, 16, 32, 64, 128)
 
-The following are timing results using cargo bench with varying shards in the order mentioned above:
-![MPMC usize Benchmark Results](readme_imgs/mpmc_usize_bm.png)
+The following are timing results using `cargo bench` with varying shards in the order mentioned above (with and without barrier synchronization respectively):
 
-With 8 shards, it seems like the ring buffer I designed can handle 18.47 millions operations (enqueue + dequeue pair) per sec, and with 128 shards, it seems like the ring buffer I designed can handle 40 millions operations per sec in an async MPMC usize situation, which seems to contend with many well-known concurrency related data structure crates in Rust for MPMC.
+
+![MPMC usize Benchmark Results with Barrier](readme_imgs/mpmc_usize_with_barrier.png)
+
+
+![MPMC usize Benchmark Results without Barrier](readme_imgs/mpmc_usize_without_barrier.png)
+
+In the with barrier scenario:
+* 8 shards ~ can possibly handle ~18.05 million operations per sec
+* 16 shards ~ can possibly handle ~31.46 million operations per sec
+* 32 shards ~ can possibly handle ~32.53 million operations per sec
+* 64 shards ~ can possibly handle ~32.23 million operations per sec
+* 128 shards ~ can possibly handle ~32.22 million operations per sec
+
+In the without barrier scenario:
+* 8 shards ~ can possibly handle ~18.30 million operations per sec
+* 16 shards ~ can possibly handle ~32.71 million operations per sec
+* 32 shards ~ can possibly handle ~34.20 million operations per sec
+* 64 shards ~ can possibly handle ~36.33 million operations per sec
+* 128 shards ~ can possibly handle ~41.16 million operations per sec
+
+Note: An operation here means a pair of enqueue/dequeue being called.
+
+The barrier synchronization has an effect in the code because otherwise the dequeue tasks are likely to trigger the backoff policy and sleep initally. With increasing shard count, there are more unoccupied shards that an enquerer can put its item in and less conflicts with the dequerer or other enquerer tasks acquiring the shard. In fact, it's actually the dequerer that may experience a delay because it keeps acquiring the shards too quickly only to find out that the shard has no jobs inside (more `self.shard_jobs[current].occupied.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok()` calls). In the future, I may need to plan out better ways for a dequerer task to be given a shard that has a job inside.
 
 # Future Additions/Thoughts
 * Enqueuing/Dequeuing items in batches to take advantage of Auto-Vectorization compiler optimizations

@@ -9,7 +9,7 @@ use tokio::sync::Barrier as AsyncBarrier;
 
 // comparing the benchmarking to
 // https://github.com/fereidani/rust-channel-benchmarks/tree/main?tab=readme-ov-file
-const MAX_SHARDS: usize = 128;
+const MAX_SHARDS: [usize; 5] = [8, 16, 32, 64, 128];
 const MAX_TASKS: usize = 4;
 // const MAX_THREADS: usize = 16;
 const MAX_THREADS: usize = 8;
@@ -18,10 +18,10 @@ const CAPACITY: usize = 1000000;
 // const ITEM_PER_TASK: usize = (1 << 20) / (MAX_THREADS/2);
 const ITEM_PER_TASK: usize = 250000;
 
-async fn benchmark_lock_free_sharded_buffer(capacity: usize) {
+async fn benchmark_lock_free_sharded_buffer(capacity: usize, shards: usize) {
     let max_items: usize = capacity;
 
-    let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(max_items, MAX_SHARDS));
+    let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(max_items, shards));
 
     // barrier used to make sure all tasks are operating at the same time
     // so that threads are all assigned a task at once
@@ -81,7 +81,7 @@ fn rb_benchmark(c: &mut Criterion) {
         .unwrap();
 
     c.bench_with_input(
-        BenchmarkId::new("lock_free_sharded_buffer", CAPACITY),
+        BenchmarkId::new("8shard_buffer", CAPACITY),
         &CAPACITY,
         |b, &s| {
             // Insert a call to `to_async` to convert the bencher to async mode.
@@ -90,7 +90,87 @@ fn rb_benchmark(c: &mut Criterion) {
                 let mut total = Duration::ZERO;
                 for _i in 0..iters {
                     let start = Instant::now();
-                    benchmark_lock_free_sharded_buffer(s).await;
+                    benchmark_lock_free_sharded_buffer(s, MAX_SHARDS[0]).await;
+                    let end = Instant::now();
+                    total += end - start;
+                }
+
+                total
+            });
+        },
+    );
+
+    c.bench_with_input(
+        BenchmarkId::new("16shard_buffer", CAPACITY),
+        &CAPACITY,
+        |b, &s| {
+            // Insert a call to `to_async` to convert the bencher to async mode.
+            // The timing loops are the same as with the normal bencher.
+            b.to_async(&runtime).iter_custom(|iters| async move {
+                let mut total = Duration::ZERO;
+                for _i in 0..iters {
+                    let start = Instant::now();
+                    benchmark_lock_free_sharded_buffer(s, MAX_SHARDS[1]).await;
+                    let end = Instant::now();
+                    total += end - start;
+                }
+
+                total
+            });
+        },
+    );
+
+    c.bench_with_input(
+        BenchmarkId::new("32shard_buffer", CAPACITY),
+        &CAPACITY,
+        |b, &s| {
+            // Insert a call to `to_async` to convert the bencher to async mode.
+            // The timing loops are the same as with the normal bencher.
+            b.to_async(&runtime).iter_custom(|iters| async move {
+                let mut total = Duration::ZERO;
+                for _i in 0..iters {
+                    let start = Instant::now();
+                    benchmark_lock_free_sharded_buffer(s, MAX_SHARDS[2]).await;
+                    let end = Instant::now();
+                    total += end - start;
+                }
+
+                total
+            });
+        },
+    );
+
+    c.bench_with_input(
+        BenchmarkId::new("64shard_buffer", CAPACITY),
+        &CAPACITY,
+        |b, &s| {
+            // Insert a call to `to_async` to convert the bencher to async mode.
+            // The timing loops are the same as with the normal bencher.
+            b.to_async(&runtime).iter_custom(|iters| async move {
+                let mut total = Duration::ZERO;
+                for _i in 0..iters {
+                    let start = Instant::now();
+                    benchmark_lock_free_sharded_buffer(s, MAX_SHARDS[3]).await;
+                    let end = Instant::now();
+                    total += end - start;
+                }
+
+                total
+            });
+        },
+    );
+
+    c.bench_with_input(
+        BenchmarkId::new("128shard_buffer", CAPACITY),
+        &CAPACITY,
+        |b, &s| {
+            // Insert a call to `to_async` to convert the bencher to async mode.
+            // The timing loops are the same as with the normal bencher.
+            b.to_async(&runtime).iter_custom(|iters| async move {
+                let mut total = Duration::ZERO;
+                for _i in 0..iters {
+                    let start = Instant::now();
+                    benchmark_lock_free_sharded_buffer(s, MAX_SHARDS[4]).await;
                     let end = Instant::now();
                     total += end - start;
                 }
