@@ -6,7 +6,6 @@ use std::{
     fmt::Debug,
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
-    usize,
 };
 
 // Enum used in try_acquire_shard to determine if task
@@ -23,7 +22,6 @@ enum Acquire {
 /// See the [Wikipedia article](https://en.wikipedia.org/wiki/Circular_buffer) for more info.
 #[derive(Debug)]
 pub struct LFShardedRingBuf<T> {
-    #[warn(dead_code)]
     capacity: usize,
     shards: usize,
     max_capacity_per_shard: usize,
@@ -93,7 +91,7 @@ impl<T> LFShardedRingBuf<T> {
         assert!(shards > 0, "Shards must be positive");
         Self {
             capacity: (capacity as f64 / shards as f64).ceil() as usize * shards,
-            shards: shards,
+            shards,
             max_capacity_per_shard: (capacity + shards - 1) / shards,
             shard_jobs: {
                 let mut vec = Vec::with_capacity(shards);
@@ -117,10 +115,10 @@ impl<T> LFShardedRingBuf<T> {
     /// Acquire the specific shard
     #[inline(always)]
     fn acquire_shard(&self, shard_ind: usize) -> bool {
-        return self.shard_jobs[shard_ind]
+        self.shard_jobs[shard_ind]
             .occupied
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok();
+            .is_ok()
     }
 
     /// Release the specific shard
@@ -385,12 +383,12 @@ impl<T> LFShardedRingBuf<T> {
             self.release_shard(i);
         }
 
-        return res;
+        res
     }
 
     #[inline(always)]
     pub fn is_shard_empty(&self, shard_ind: usize) -> bool {
-        return self.shard_jobs[shard_ind].job_count.get() == 0;
+        self.shard_jobs[shard_ind].job_count.get() == 0
     }
 
     /// Checks whether the LFShardedRingBuf is full or not
@@ -423,12 +421,12 @@ impl<T> LFShardedRingBuf<T> {
             self.release_shard(i);
         }
 
-        return res;
+        res
     }
 
     #[inline(always)]
     pub fn is_shard_full(&self, shard_ind: usize) -> bool {
-        return self.shard_jobs[shard_ind].job_count.get() == self.max_capacity_per_shard;
+        self.shard_jobs[shard_ind].job_count.get() == self.max_capacity_per_shard
     }
 
     /// Checks the next enqueue index within the LFShardedRingBuf
@@ -461,7 +459,7 @@ impl<T> LFShardedRingBuf<T> {
         // release shard
         self.release_shard(shard_ind);
 
-        return Some(enq_ind);
+        Some(enq_ind)
     }
 
     /// Checks the next dequeue index within the LFShardedRingBuf
@@ -493,7 +491,7 @@ impl<T> LFShardedRingBuf<T> {
 
         // release shard
         self.release_shard(shard_ind);
-        return Some(deq_ind);
+        Some(deq_ind)
     }
 
     /// Returns a clone of the item within the LFShardedRingBuf
@@ -540,7 +538,7 @@ impl<T> LFShardedRingBuf<T> {
         // release shard
         self.release_shard(shard_ind);
 
-        return item;
+        item
     }
 
     /// Returns a clone of a specific InnerRingBuffer shard in its current state
@@ -588,7 +586,7 @@ impl<T> LFShardedRingBuf<T> {
         // release shard
         self.release_shard(shard_ind);
 
-        return Some(items);
+        Some(items)
     }
 
     /// Returns a clone of the LFShardedRingBuf in its current state
@@ -641,7 +639,7 @@ impl<T> LFShardedRingBuf<T> {
             self.release_shard(i);
         }
 
-        return vec.into_boxed_slice();
+        vec.into_boxed_slice()
     }
 
     /// Print out the content inside the LFShardedRingBuf

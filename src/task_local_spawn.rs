@@ -18,13 +18,12 @@ where
 pub fn get_shard_ind() -> Option<usize> {
     SHARD_INDEX
         .try_with(|cell| {
-            let cell_val = cell.get();
-            cell_val
+            cell.get()
         })
         .unwrap_or_else(|_| {
             panic!("SHARD_INDEX is not initialized. Use `.spawn_with_shard_index()`.")
         });
-    return None;
+    None
 }
 
 #[inline(always)]
