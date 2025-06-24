@@ -9,7 +9,7 @@ use tokio::sync::Barrier as AsyncBarrier;
 
 // comparing the benchmarking to
 // https://github.com/fereidani/rust-channel-benchmarks/tree/main?tab=readme-ov-file
-const MAX_SHARDS: usize = 100;
+const MAX_SHARDS: usize = 128;
 const MAX_TASKS: usize = 4;
 // const MAX_THREADS: usize = 16;
 const MAX_THREADS: usize = 8;

@@ -3,8 +3,7 @@ use lf_shardedringbuf::spawn_with_shard_index;
 use std::sync::Arc;
 use tokio::sync::Barrier as AsyncBarrier;
 
-#[tokio::test]
-// #[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "current_thread")]
 // Single threaded test case
 async fn test_counter() {
     const MAX_ITEMS: usize = 100;
