@@ -9,7 +9,7 @@ use std::{
     usize,
 };
 
-// Enum used in acquire_shard to determine if task
+// Enum used in try_acquire_shard to determine if task
 // is enqueue or dequeue
 #[derive(Debug, PartialEq, Eq)]
 enum Acquire {
@@ -61,6 +61,7 @@ impl ShardJob {
 /// Implements the InnerRingBuffer functions
 impl<T> InnerRingBuffer<T> {
     /// Instantiates the InnerRingBuffer
+    #[inline(always)] // inline because this could be called often
     fn new(capacity: usize) -> Self {
         InnerRingBuffer {
             items: {
@@ -113,6 +114,23 @@ impl<T> LFShardedRingBuf<T> {
         }
     }
 
+    /// Acquire the specific shard
+    #[inline(always)]
+    fn acquire_shard(&self, shard_ind: usize) -> bool {
+        return self.shard_jobs[shard_ind]
+            .occupied
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok();
+    }
+
+    /// Release the specific shard
+    #[inline(always)]
+    fn release_shard(&self, shard_ind: usize) {
+        self.shard_jobs[shard_ind]
+            .occupied
+            .store(false, Ordering::Release);
+    }
+
     /// Helper function for a thread to acquire a specific shard within
     /// self.shard_jobs for enqueuing or dequeuing purposes. It iterates
     /// in a ring buffer like manner per thread to give each shard equal weight.
@@ -129,7 +147,7 @@ impl<T> LFShardedRingBuf<T> {
     /// so that each thread can find a shard to enqueue or dequeue off from
     ///
     /// Space Complexity: O(1)
-    async fn acquire_shard(&self, acquire: Acquire) -> usize {
+    async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
         /*
          * Threads start off with a random shard_ind or
          * user provided initial shard ind value (+ 1 % self.shards)
@@ -161,22 +179,10 @@ impl<T> LFShardedRingBuf<T> {
         let mut attempt: i32 = 0;
 
         loop {
-            if self.shard_jobs[current]
-                .occupied
-                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
+            if self.acquire_shard(current) {
                 if match acquire {
-                    Acquire::Enqueue => {
-                        // let shard_full = self.is_shard_full(current);
-                        // !shard_full
-                        !self.is_shard_full(current)
-                    }
-                    Acquire::Dequeue => {
-                        // let shard_empty = self.is_shard_empty(current);
-                        // !shard_empty
-                        !self.is_shard_empty(current)
-                    }
+                    Acquire::Enqueue => !self.is_shard_full(current),
+                    Acquire::Dequeue => !self.is_shard_empty(current),
                     Acquire::Poison => !self.is_shard_full(current),
                 } {
                     if acquire != Acquire::Poison {
@@ -187,9 +193,7 @@ impl<T> LFShardedRingBuf<T> {
                     }
                     break;
                 } else {
-                    self.shard_jobs[current]
-                        .occupied
-                        .store(false, Ordering::Release);
+                    self.release_shard(current);
                 }
             }
 
@@ -211,6 +215,32 @@ impl<T> LFShardedRingBuf<T> {
         current
     }
 
+    /// Increment num of jobs in shard by 1 and
+    /// Release the occupation status of this shard atomically
+    #[inline(always)]
+    fn release_and_increment_shard(&self, shard_ind: usize) {
+        self.shard_jobs[shard_ind]
+            .job_count
+            .set(self.shard_jobs[shard_ind].job_count.get() + 1);
+        self.shard_jobs[shard_ind]
+            .occupied
+            .store(false, Ordering::Release);
+    }
+
+    /// Grab inner ring buffer shard, enqueue the item, update the enqueue index
+    #[inline(always)]
+    fn enqueue_in_shard(&self, shard_ind: usize, item: Option<T>) {
+        let inner = &self.inner_rb[shard_ind];
+        let enqueue_index = inner.enqueue_index.get();
+        let item_cell = inner.items[enqueue_index].get();
+        unsafe {
+            *item_cell = item;
+        }
+        inner
+            .enqueue_index
+            .set((enqueue_index + 1) % self.max_capacity_per_shard);
+    }
+
     /// Helper function to add an Option item to the RingBuffer
     /// This is necessary so that the ring buffer can be poisoned with None values
     ///
@@ -220,29 +250,12 @@ impl<T> LFShardedRingBuf<T> {
     async fn enqueue_item(&self, item: Option<T>) {
         // acquire shard
         let current = match item {
-            Some(_) => self.acquire_shard(Acquire::Enqueue).await,
-            None => self.acquire_shard(Acquire::Poison).await,
+            Some(_) => self.try_acquire_shard(Acquire::Enqueue).await,
+            None => self.try_acquire_shard(Acquire::Poison).await,
         };
 
-        // Grab inner ring buffer shard, enqueue the item, update the enqueue index
-        let inner = &self.inner_rb[current];
-        let enqueue_index = inner.enqueue_index.get();
-        let item_cell = inner.items[enqueue_index].get();
-        unsafe {
-            *item_cell = item;
-        }
-        inner
-            .enqueue_index
-            .set((enqueue_index + 1) % self.max_capacity_per_shard);
-
-        // Update the num jobs there are in total, the number of jobs inside
-        // each shard, and release the occupation status of this shard atomically
-        self.shard_jobs[current]
-            .job_count
-            .set(self.shard_jobs[current].job_count.get() + 1);
-        self.shard_jobs[current]
-            .occupied
-            .store(false, Ordering::Release);
+        self.enqueue_in_shard(current, item);
+        self.release_and_increment_shard(current);
     }
 
     /// Adds an item of type T to the RingBuffer, *blocking* the thread until there is space to add the item.
@@ -254,32 +267,39 @@ impl<T> LFShardedRingBuf<T> {
         self.enqueue_item(Some(item)).await;
     }
 
+    /// Decrement num of jobs in shard by 1 and
+    /// Release the occupation status of this shard atomically
+    #[inline(always)]
+    fn release_and_decrement_shard(&self, shard_ind: usize) {
+        self.shard_jobs[shard_ind]
+            .job_count
+            .set(self.shard_jobs[shard_ind].job_count.get() - 1);
+        self.shard_jobs[shard_ind]
+            .occupied
+            .store(false, Ordering::Release);
+    }
+
+    /// Grab the inner ring buffer shard, dequeue the item, update the dequeue index
+    #[inline(always)]
+    fn dequeue_in_shard(&self, shard_ind: usize) -> Option<T> {
+        let inner = &self.inner_rb[shard_ind];
+        let dequeue_index = inner.dequeue_index.get();
+        let item = unsafe { (*inner.items[dequeue_index].get()).take() };
+        inner
+            .dequeue_index
+            .set((dequeue_index + 1) % self.max_capacity_per_shard);
+        item
+    }
+
     /// Retrieves an item of type T from the RingBuffer if an item exists in the buffer.
     ///
     /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
     ///
     /// Space Complexity: O(1)
     pub async fn dequeue(&self) -> Option<T> {
-        // acquire shard
-        let current = self.acquire_shard(Acquire::Dequeue).await;
-
-        // Grab the inner ring buffer shard, dequeue the item, update the dequeue index
-        let inner = &self.inner_rb[current];
-        let dequeue_index = inner.dequeue_index.get();
-        let item = unsafe { (*inner.items[dequeue_index].get()).take() };
-        inner
-            .dequeue_index
-            .set((dequeue_index + 1) % self.max_capacity_per_shard);
-
-        // Update the num jobs there are in total, the number of jobs inside
-        // each shard, and release the occupation status of this shard atomically
-        self.shard_jobs[current]
-            .job_count
-            .set(self.shard_jobs[current].job_count.get() - 1);
-        self.shard_jobs[current]
-            .occupied
-            .store(false, Ordering::Release);
-
+        let current = self.try_acquire_shard(Acquire::Dequeue).await;
+        let item = self.dequeue_in_shard(current);
+        self.release_and_decrement_shard(current);
         item
     }
 
@@ -304,14 +324,9 @@ impl<T> LFShardedRingBuf<T> {
     /// Space complexity: O(1)
     pub async fn clear(&self) {
         let mut attempt = 0;
-        // acquire each shard
-        for shard in &self.shard_jobs {
-            while !shard
-                // .0
-                .occupied
-                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
+        // acquire shards
+        for i in 0..self.shard_jobs.len() {
+            while !self.acquire_shard(i) {
                 if attempt < 10 {
                     std::hint::spin_loop();
                     attempt += 1;
@@ -334,11 +349,9 @@ impl<T> LFShardedRingBuf<T> {
             self.shard_jobs[shard].job_count.set(0);
         }
 
-        // release the shard
-        for shard in 0..self.shards {
-            self.shard_jobs[shard]
-                .occupied
-                .store(false, Ordering::Release);
+        // release shards
+        for i in 0..self.shard_jobs.len() {
+            self.release_shard(i);
         }
     }
 
@@ -349,14 +362,9 @@ impl<T> LFShardedRingBuf<T> {
     /// Space Complexity: O(1)
     pub async fn is_empty(&self) -> bool {
         let mut attempt = 0;
-        // acquire shard
-        for shard in &self.shard_jobs {
-            while !shard
-                // .0
-                .occupied
-                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
+        // acquire shards
+        for i in 0..self.shard_jobs.len() {
+            while !self.acquire_shard(i) {
                 if attempt < 10 {
                     std::hint::spin_loop();
                     attempt += 1;
@@ -372,14 +380,15 @@ impl<T> LFShardedRingBuf<T> {
             .iter()
             .all(|shard| shard.job_count.get() == 0);
 
-        // release shard
-        for shard in &self.shard_jobs {
-            shard.occupied.store(false, Ordering::Release);
+        // release shards
+        for i in 0..self.shard_jobs.len() {
+            self.release_shard(i);
         }
 
         return res;
     }
 
+    #[inline(always)]
     pub fn is_shard_empty(&self, shard_ind: usize) -> bool {
         return self.shard_jobs[shard_ind].job_count.get() == 0;
     }
@@ -392,13 +401,8 @@ impl<T> LFShardedRingBuf<T> {
     pub async fn is_full(&self) -> bool {
         let mut attempt = 0;
         // acquire shard
-        for shard in &self.shard_jobs {
-            while !shard
-                // .0
-                .occupied
-                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
+        for i in 0..self.shard_jobs.len() {
+            while !self.acquire_shard(i) {
                 if attempt < 10 {
                     std::hint::spin_loop();
                     attempt += 1;
@@ -414,14 +418,15 @@ impl<T> LFShardedRingBuf<T> {
             .iter()
             .all(|shard| shard.job_count.get() == self.max_capacity_per_shard);
 
-        // release shard
-        for shard in &self.shard_jobs {
-            shard.occupied.store(false, Ordering::Release);
+        // release shards
+        for i in 0..self.shard_jobs.len() {
+            self.release_shard(i);
         }
 
         return res;
     }
 
+    #[inline(always)]
     pub fn is_shard_full(&self, shard_ind: usize) -> bool {
         return self.shard_jobs[shard_ind].job_count.get() == self.max_capacity_per_shard;
     }
@@ -439,12 +444,7 @@ impl<T> LFShardedRingBuf<T> {
 
         let mut attempt = 0;
         // spin trying to grab the shard
-        while !self.shard_jobs[shard_ind]
-            // .0
-            .occupied
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-        {
+        while !self.acquire_shard(shard_ind) {
             if attempt < 10 {
                 std::hint::spin_loop();
                 attempt += 1;
@@ -459,9 +459,7 @@ impl<T> LFShardedRingBuf<T> {
         let enq_ind = inner.enqueue_index.get();
 
         // release shard
-        self.shard_jobs[shard_ind]
-            .occupied
-            .store(false, Ordering::Release);
+        self.release_shard(shard_ind);
 
         return Some(enq_ind);
     }
@@ -479,12 +477,7 @@ impl<T> LFShardedRingBuf<T> {
 
         let mut attempt = 0;
         // spin trying to grab the shard
-        while !self.shard_jobs[shard_ind]
-            // .0
-            .occupied
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-        {
+        while !self.acquire_shard(shard_ind) {
             if attempt < 10 {
                 std::hint::spin_loop();
                 attempt += 1;
@@ -499,9 +492,7 @@ impl<T> LFShardedRingBuf<T> {
         let deq_ind = inner.dequeue_index.get();
 
         // release shard
-        self.shard_jobs[shard_ind]
-            .occupied
-            .store(false, Ordering::Release);
+        self.release_shard(shard_ind);
         return Some(deq_ind);
     }
 
@@ -532,12 +523,7 @@ impl<T> LFShardedRingBuf<T> {
 
         let mut attempt = 0;
         // spin trying to grab the shard
-        while !self.shard_jobs[shard_ind]
-            // .0
-            .occupied
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-        {
+        while !self.acquire_shard(shard_ind) {
             if attempt < 10 {
                 std::hint::spin_loop();
                 attempt += 1;
@@ -552,9 +538,7 @@ impl<T> LFShardedRingBuf<T> {
         let item = unsafe { (*inner.items[item_index].get()).clone() };
 
         // release shard
-        self.shard_jobs[shard_ind]
-            .occupied
-            .store(false, Ordering::Release);
+        self.release_shard(shard_ind);
 
         return item;
     }
@@ -581,12 +565,7 @@ impl<T> LFShardedRingBuf<T> {
 
         let mut attempt = 0;
         // spin trying to grab the shard
-        while !self.shard_jobs[shard_ind]
-            // .0
-            .occupied
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-        {
+        while !self.acquire_shard(shard_ind) {
             if attempt < 10 {
                 std::hint::spin_loop();
                 attempt += 1;
@@ -607,9 +586,7 @@ impl<T> LFShardedRingBuf<T> {
         };
 
         // release shard
-        self.shard_jobs[shard_ind]
-            .occupied
-            .store(false, Ordering::Release);
+        self.release_shard(shard_ind);
 
         return Some(items);
     }
@@ -631,14 +608,9 @@ impl<T> LFShardedRingBuf<T> {
         T: Clone,
     {
         let mut attempt = 0;
-        // acquire shard
-        for shard in &self.shard_jobs {
-            while !shard
-                // .0
-                .occupied
-                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
+        // acquire shards
+        for i in 0..self.shard_jobs.len() {
+            while !self.acquire_shard(i) {
                 if attempt < 10 {
                     std::hint::spin_loop();
                     attempt += 1;
@@ -665,8 +637,8 @@ impl<T> LFShardedRingBuf<T> {
         }
 
         // release shard
-        for shard in &self.shard_jobs {
-            shard.occupied.store(false, Ordering::Release);
+        for i in 0..self.shard_jobs.len() {
+            self.release_shard(i);
         }
 
         return vec.into_boxed_slice();
@@ -685,13 +657,8 @@ impl<T> LFShardedRingBuf<T> {
     {
         let mut attempt = 0;
         // sping to acquire shard
-        for shard in &self.shard_jobs {
-            while !shard
-                // .0
-                .occupied
-                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
+        for i in 0..self.shard_jobs.len() {
+            while !self.acquire_shard(i) {
                 if attempt < 10 {
                     std::hint::spin_loop();
                     attempt += 1;
@@ -714,9 +681,7 @@ impl<T> LFShardedRingBuf<T> {
             }
             print!("]");
             println!();
-            self.shard_jobs[shard]
-                .occupied
-                .store(false, Ordering::Release);
+            self.release_shard(shard);
         }
     }
 }
