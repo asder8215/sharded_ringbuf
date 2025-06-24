@@ -25,20 +25,20 @@ The following are timing results using `cargo bench` with varying shards in the 
 ![MPMC usize Benchmark Results without Barrier](readme_imgs/mpmc_usize_without_barrier.png)
 
 In the with barrier scenario:
-* 8 shards ~ can possibly handle ~18.05 million operations per sec
-* 16 shards ~ can possibly handle ~31.46 million operations per sec
-* 32 shards ~ can possibly handle ~32.53 million operations per sec
-* 64 shards ~ can possibly handle ~32.23 million operations per sec
-* 128 shards ~ can possibly handle ~32.22 million operations per sec
+* 8 shards ~ can possibly handle ~36.10 million operations per sec
+* 16 shards ~ can possibly handle ~62.92 million operations per sec
+* 32 shards ~ can possibly handle ~65.05 million operations per sec
+* 64 shards ~ can possibly handle ~64.46 million operations per sec
+* 128 shards ~ can possibly handle ~64.45 million operations per sec
 
 In the without barrier scenario:
-* 8 shards ~ can possibly handle ~18.30 million operations per sec
-* 16 shards ~ can possibly handle ~32.71 million operations per sec
-* 32 shards ~ can possibly handle ~34.20 million operations per sec
-* 64 shards ~ can possibly handle ~36.33 million operations per sec
-* 128 shards ~ can possibly handle ~41.16 million operations per sec
+* 8 shards ~ can possibly handle ~36.60 million operations per sec
+* 16 shards ~ can possibly handle ~65.43 million operations per sec
+* 32 shards ~ can possibly handle ~68.40 million operations per sec
+* 64 shards ~ can possibly handle ~72.67 million operations per sec
+* 128 shards ~ can possibly handle ~82.32 million operations per sec
 
-Note: An operation here means a pair of enqueue/dequeue being called.
+Note: An operation here means either an enqueue or dequeue
 
 The barrier synchronization has an effect in the code because otherwise the dequeue tasks are likely to trigger the backoff policy and sleep initally. With increasing shard count, there are more unoccupied shards that an enquerer can put its item in and less conflicts with the dequerer or other enquerer tasks acquiring the shard. In fact, it's actually the dequerer that may experience a delay because it keeps acquiring the shards too quickly only to find out that the shard has no jobs inside (more `self.shard_jobs[current].occupied.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok()` calls). In the future, I may need to plan out better ways for a dequerer task to be given a shard that has a job inside.
 
