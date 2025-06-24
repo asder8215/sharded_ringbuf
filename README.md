@@ -10,7 +10,7 @@ A lock-free, sharded, cache-aware MPMC ring buffer for Rust. Performant for high
 * It can perform in an async multithreaded or single threaded environment (optimal for multiple producer, multiple consumer situations though)
 
 # Benchmark Results
-Benchmarking was performed in a similar style to [Rust Channel Benchmarks](https://github.com/fereidani/rust-channel-benchmarks/tree/main). However, I only tested it on the Bounded Channel with Size N in MPMC usize case. In essence, I used:
+Benchmarking was performed in a similar style to [Rust Channel Benchmarks](https://github.com/fereidani/rust-channel-benchmarks/tree/main). However, look at [Kanal Repository](https://github.com/fereidani/kanal?tab=readme-ov-file) for an updated benchmark timing on all the top repos. Moreover, I only tested it on the Bounded Channel with Size N in MPMC usize case. In essence, I used:
 * 4 tasks respectively for enqueuing and dequeuing (each iterating through 250,000 usize)
 * 8 worker threads
 * Total capacity of the buffer is 1,000,000 entries
