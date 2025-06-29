@@ -1,11 +1,10 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use lf_shardedringbuf::{LFShardedRingBuf, spawn_with_shard_index};
 use std::{
-    sync::{Arc, Barrier, Mutex},
-    thread,
-    time::{Duration, Instant},
+    i8, sync::{Arc, Barrier, Mutex}, thread, time::{Duration, Instant}
 };
 use tokio::sync::Barrier as AsyncBarrier;
+use lf_shardedringbuf::ShardPolicy;
 
 // comparing the benchmarking to
 // https://github.com/fereidani/rust-channel-benchmarks/tree/main?tab=readme-ov-file
@@ -31,10 +30,28 @@ async fn benchmark_lock_free_sharded_buffer(capacity: usize, shards: usize) {
     let mut enq_threads = Vec::with_capacity(MAX_TASKS);
 
     // spawn deq tasks
-    for _ in 0..MAX_TASKS {
+    // for _ in 0..MAX_TASKS {
+    //     let rb = Arc::clone(&rb);
+    //     let barrier = Arc::clone(&barrier);
+    //     let handler: tokio::task::JoinHandle<usize> = spawn_with_shard_index(None, async move {
+    //         barrier.wait().await;
+    //         let mut counter: usize = 0;
+    //         for _i in 0..ITEM_PER_TASK {
+    //             let item = rb.dequeue().await;
+    //             match item {
+    //                 Some(_) => counter += 1,
+    //                 None => break,
+    //             }
+    //         }
+    //         counter
+    //     });
+    //     deq_threads.push(handler);
+    // }
+
+    for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
-        let handler: tokio::task::JoinHandle<usize> = spawn_with_shard_index(None, async move {
+        let handler: tokio::task::JoinHandle<usize> = spawn_with_shard_index(Some(i), ShardPolicy::ShiftBy, MAX_TASKS, async move {
             barrier.wait().await;
             let mut counter: usize = 0;
             for _i in 0..ITEM_PER_TASK {
@@ -50,10 +67,10 @@ async fn benchmark_lock_free_sharded_buffer(capacity: usize, shards: usize) {
     }
 
     // spawn enq tasks
-    for _ in 0..MAX_TASKS {
+    for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
-        let handler: tokio::task::JoinHandle<()> = spawn_with_shard_index(None, async move {
+        let handler: tokio::task::JoinHandle<()> = spawn_with_shard_index(Some(i), ShardPolicy::ShiftBy, MAX_TASKS,async move {
             barrier.wait().await;
             for i in 0..ITEM_PER_TASK {
                 rb.enqueue(i).await;

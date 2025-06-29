@@ -1,6 +1,7 @@
-use crate::task_local_spawn::{get_shard_ind, set_shard_ind};
+use crate::{get_shard_policy, get_shift, task_local_spawn::{get_shard_ind, set_shard_ind}, ShardPolicy};
 use crossbeam_utils::CachePadded;
 use fastrand::usize as frand;
+use tokio::task::yield_now;
 use std::{
     cell::{Cell, UnsafeCell},
     fmt::Debug,
@@ -158,18 +159,36 @@ impl<T> LFShardedRingBuf<T> {
         let mut current = match acquire {
             Acquire::Poison => 0,
             _ => {
-                match get_shard_ind() {
-                    Some(val) => {
-                        let val = (val + 1) % self.shards;
-                        set_shard_ind(val);
-                        val
-                    } // look at the next shard
-                    None => {
-                        let val = frand(0..self.shards);
-                        set_shard_ind(val);
-                        val
-                    } // init rand shard for thread to look at
+
+                match get_shard_policy() {
+                    ShardPolicy::RandomAndSweep => {
+                        frand(0..self.shards)
+                    },
+                    _ => {
+                        match get_shard_ind() {
+                            Some(val) => {
+                                val % self.shards
+                            } // look at the next shard
+                            None => {
+                                let val = frand(0..self.shards);
+                                set_shard_ind(val);
+                                val
+                            } // init rand shard for thread to look at
+                        }
+                    },
                 }
+                // match get_shard_ind() {
+                //     Some(val) => {
+                //         let val = (val + 1) % self.shards;
+                //         set_shard_ind(val);
+                //         val
+                //     } // look at the next shard
+                //     None => {
+                //         let val = frand(0..self.shards);
+                //         set_shard_ind(val);
+                //         val
+                //     } // init rand shard for thread to look at
+                // }
             }
         };
 
@@ -187,7 +206,8 @@ impl<T> LFShardedRingBuf<T> {
                         // make sure that the shard index value is set to the
                         // next index it should look at instead of starting
                         // from its previous state
-                        set_shard_ind((current + 1) % self.shards);
+                        // set_shard_ind((current + 1) % self.shards);
+                        set_shard_ind((current + get_shift()) % self.shards);
                     }
                     break;
                 } else {
@@ -195,7 +215,7 @@ impl<T> LFShardedRingBuf<T> {
                 }
             }
 
-            current = (current + 1) % self.shards;
+            current = (current + get_shift()) % self.shards;
 
             spins += 1;
             // yield only once the enquerer or dequerer thread has went one round through
@@ -204,10 +224,16 @@ impl<T> LFShardedRingBuf<T> {
                 // yielding is done through exponential backoff + random jitter
                 // max wait of 20ms; jitter allows the threads to wake up at
                 // different ms timings
-                let backoff_ms = (1u64 << attempt.min(5)).min(20) as usize;
-                let jitter = frand(0..=backoff_ms) as u64;
-                tokio::time::sleep(Duration::from_millis(jitter)).await;
-                attempt = attempt.saturating_add(1); // Avoid overflow
+                // let backoff_ms = (1u64 << attempt.min(5)).min(20) as usize;
+                // let jitter = frand(0..=backoff_ms) as u64;
+                // tokio::time::sleep(Duration::from_millis(jitter)).await;
+                // attempt = attempt.saturating_add(1); // Avoid overflow
+
+                attempt += 1;
+                if attempt % 2 == 0 && get_shard_policy() == ShardPolicy::ShiftBy {
+                    set_shard_ind((current + 1) % self.shards);
+                }
+                yield_now().await;
             }
         }
         current
