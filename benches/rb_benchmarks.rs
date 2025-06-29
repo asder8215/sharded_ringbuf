@@ -1,23 +1,20 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use kanal::bounded_async;
+use lf_shardedringbuf::ShardPolicy;
 use lf_shardedringbuf::{LFShardedRingBuf, spawn_with_shard_index};
 use std::{
-    i8, sync::{Arc, Barrier, Mutex}, thread, time::{Duration, Instant}
+    sync::{Arc},
+    time::{Duration, Instant},
 };
 use tokio::{sync::Barrier as AsyncBarrier, task};
-use lf_shardedringbuf::ShardPolicy;
 
 // comparing the benchmarking to
 // https://github.com/fereidani/rust-channel-benchmarks/tree/main?tab=readme-ov-file
-const MAX_SHARDS: [usize; 5] = [8, 16, 32, 64, 128];
-const MAX_TASKS: usize = 4;
-// const MAX_THREADS: usize = 16;
-const MAX_THREADS: usize = 8;
-// const CAPACITY: usize = (1 << 20) / (MAX_THREADS/2) * 2;
-const CAPACITY: usize = 1000000;
-// const ITEM_PER_TASK: usize = (1 << 20) / (MAX_THREADS/2);
-const ITEM_PER_TASK: usize = 250000;
-
+const MAX_SHARDS: [usize; 6] = [8, 16, 32, 64, 128, 256];
+const MAX_TASKS: usize = 8;
+const MAX_THREADS: usize = MAX_TASKS * 2;
+const CAPACITY: usize = 8192;
+const ITEM_PER_TASK: usize = 500000;
 
 async fn kanal_mpmc_async_benchmark(c: usize) {
     let (s, r) = bounded_async::<usize>(c);
@@ -67,53 +64,37 @@ async fn benchmark_lock_free_sharded_buffer(capacity: usize, shards: usize) {
     let mut deq_threads = Vec::with_capacity(MAX_TASKS);
     let mut enq_threads = Vec::with_capacity(MAX_TASKS);
 
-    // spawn deq tasks
-    // for _ in 0..MAX_TASKS {
-    //     let rb = Arc::clone(&rb);
-    //     let barrier = Arc::clone(&barrier);
-    //     let handler: tokio::task::JoinHandle<usize> = spawn_with_shard_index(None, async move {
-    //         barrier.wait().await;
-    //         let mut counter: usize = 0;
-    //         for _i in 0..ITEM_PER_TASK {
-    //             let item = rb.dequeue().await;
-    //             match item {
-    //                 Some(_) => counter += 1,
-    //                 None => break,
-    //             }
-    //         }
-    //         counter
-    //     });
-    //     deq_threads.push(handler);
-    // }
-
+    // spawn deq tasks with shift by policy
     for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
-        let handler: tokio::task::JoinHandle<usize> = spawn_with_shard_index(Some(i), ShardPolicy::ShiftBy, MAX_TASKS, async move {
-            barrier.wait().await;
-            let mut counter: usize = 0;
-            for _i in 0..ITEM_PER_TASK {
-                let item = rb.dequeue().await;
-                match item {
-                    Some(_) => counter += 1,
-                    None => break,
+        let handler: tokio::task::JoinHandle<usize> =
+            spawn_with_shard_index(Some(i), ShardPolicy::ShiftBy, MAX_TASKS, async move {
+                barrier.wait().await;
+                let mut counter: usize = 0;
+                for _i in 0..ITEM_PER_TASK {
+                    let item = rb.dequeue().await;
+                    match item {
+                        Some(_) => counter += 1,
+                        None => break,
+                    }
                 }
-            }
-            counter
-        });
+                counter
+            });
         deq_threads.push(handler);
     }
 
-    // spawn enq tasks
+    // spawn enq tasks with shift by policy
     for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
-        let handler: tokio::task::JoinHandle<()> = spawn_with_shard_index(Some(i), ShardPolicy::ShiftBy, MAX_TASKS,async move {
-            barrier.wait().await;
-            for i in 0..ITEM_PER_TASK {
-                rb.enqueue(i).await;
-            }
-        });
+        let handler: tokio::task::JoinHandle<()> =
+            spawn_with_shard_index(Some(i), ShardPolicy::ShiftBy, MAX_TASKS, async move {
+                barrier.wait().await;
+                for i in 0..ITEM_PER_TASK {
+                    rb.enqueue(i).await;
+                }
+            });
         enq_threads.push(handler);
     }
 
@@ -134,6 +115,26 @@ fn rb_benchmark(c: &mut Criterion) {
         .worker_threads(MAX_THREADS)
         .build()
         .unwrap();
+
+    c.bench_with_input(
+        BenchmarkId::new("kanal_async", CAPACITY),
+        &CAPACITY,
+        |b, &s| {
+            // Insert a call to `to_async` to convert the bencher to async mode.
+            // The timing loops are the same as with the normal bencher.
+            b.to_async(&runtime).iter_custom(|iters| async move {
+                let mut total = Duration::ZERO;
+                for _i in 0..iters {
+                    let start = Instant::now();
+                    kanal_mpmc_async_benchmark(s).await;
+                    let end = Instant::now();
+                    total += end - start;
+                }
+
+                total
+            });
+        },
+    );
 
     c.bench_with_input(
         BenchmarkId::new("8shard_buffer", CAPACITY),
@@ -226,6 +227,26 @@ fn rb_benchmark(c: &mut Criterion) {
                 for _i in 0..iters {
                     let start = Instant::now();
                     benchmark_lock_free_sharded_buffer(s, MAX_SHARDS[4]).await;
+                    let end = Instant::now();
+                    total += end - start;
+                }
+
+                total
+            });
+        },
+    );
+
+    c.bench_with_input(
+        BenchmarkId::new("256shard_buffer", CAPACITY),
+        &CAPACITY,
+        |b, &s| {
+            // Insert a call to `to_async` to convert the bencher to async mode.
+            // The timing loops are the same as with the normal bencher.
+            b.to_async(&runtime).iter_custom(|iters| async move {
+                let mut total = Duration::ZERO;
+                for _i in 0..iters {
+                    let start = Instant::now();
+                    benchmark_lock_free_sharded_buffer(s, MAX_SHARDS[5]).await;
                     let end = Instant::now();
                     total += end - start;
                 }
