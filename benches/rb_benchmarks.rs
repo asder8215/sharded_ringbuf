@@ -1,9 +1,10 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use kanal::bounded_async;
 use lf_shardedringbuf::{LFShardedRingBuf, spawn_with_shard_index};
 use std::{
     i8, sync::{Arc, Barrier, Mutex}, thread, time::{Duration, Instant}
 };
-use tokio::sync::Barrier as AsyncBarrier;
+use tokio::{sync::Barrier as AsyncBarrier, task};
 use lf_shardedringbuf::ShardPolicy;
 
 // comparing the benchmarking to
@@ -16,6 +17,43 @@ const MAX_THREADS: usize = 8;
 const CAPACITY: usize = 1000000;
 // const ITEM_PER_TASK: usize = (1 << 20) / (MAX_THREADS/2);
 const ITEM_PER_TASK: usize = 250000;
+
+
+async fn kanal_mpmc_async_benchmark(c: usize) {
+    let (s, r) = bounded_async::<usize>(c);
+    let s = Arc::new(s);
+    let r = Arc::new(r);
+
+    let barrier = Arc::new(AsyncBarrier::new(MAX_TASKS * 2));
+
+    let mut handles = Vec::new();
+
+    for _ in 0..MAX_TASKS {
+        let tx = s.clone();
+        let barrier = Arc::clone(&barrier);
+        handles.push(task::spawn(async move {
+            barrier.wait().await;
+            for i in 0..ITEM_PER_TASK {
+                tx.send(i).await.unwrap();
+            }
+        }));
+    }
+
+    for _ in 0..MAX_TASKS {
+        let rx = r.clone();
+        let barrier = Arc::clone(&barrier);
+        handles.push(task::spawn(async move {
+            barrier.wait().await;
+            for _ in 0..ITEM_PER_TASK {
+                rx.recv().await.unwrap();
+            }
+        }));
+    }
+
+    for handle in handles {
+        handle.await.unwrap();
+    }
+}
 
 async fn benchmark_lock_free_sharded_buffer(capacity: usize, shards: usize) {
     let max_items: usize = capacity;
