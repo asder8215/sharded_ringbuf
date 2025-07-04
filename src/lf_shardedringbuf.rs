@@ -1,6 +1,5 @@
 use crate::{
-    ShardPolicy, get_shard_policy, get_shift,
-    task_local_spawn::{get_shard_ind, set_shard_ind},
+    task_local_spawn::{get_shard_ind, get_shard_policy, get_shift, set_shard_ind}, ShardPolicy
 };
 use crossbeam_utils::CachePadded;
 use fastrand::usize as frand;
@@ -9,7 +8,7 @@ use std::{
     fmt::Debug,
     sync::atomic::{AtomicBool, Ordering},
 };
-use tokio::task::{yield_now};
+use tokio::task::yield_now;
 
 // Enum used in try_acquire_shard to determine if task
 // is enqueue or dequeue
@@ -139,9 +138,9 @@ impl<T> LFShardedRingBuf<T> {
     /// Time Complexity: O(s_t) where s_t comes from the consideration below:
     ///
     /// The time complexity of this depends on number of enquerer and
-    /// dequerer tasks there are, shard count, and shard policies; 
+    /// dequerer tasks there are, shard count, and shard policies;
     /// ideally, you would have similar number of enquerer and dequerer tasks
-    /// with the number of shards being greater than or equal to 
+    /// with the number of shards being greater than or equal to
     /// max(enquerer task count, dequeurer task count)
     /// so that each task can find a shard to enqueue or dequeue off from
     ///
@@ -155,9 +154,7 @@ impl<T> LFShardedRingBuf<T> {
          * a shard to just enqueue a None item in there
          */
         let mut current = match acquire {
-            Acquire::Poison => {
-                0
-            },
+            Acquire::Poison => 0,
             _ => {
                 match get_shard_policy() {
                     ShardPolicy::RandomAndSweep => frand(0..self.shards),
@@ -209,13 +206,13 @@ impl<T> LFShardedRingBuf<T> {
             // yield only once the enquerer or dequerer task has went one round through
             // the shard_job buffer
             if spins >= self.shards {
-
                 // For ShiftBy policy, if within two attempts of going around the
                 // buffer did not let it find a shard to place/pop an item
                 // then, increment current by 1 and reposition based off that
                 attempt += 1;
                 if acquire != Acquire::Poison {
-                    if attempt % 2 == 0 && get_shard_policy() == ShardPolicy::ShiftBy {
+                    if attempt % 1 == 0 && matches!(get_shard_policy(), ShardPolicy::ShiftBy { .. })
+                    {
                         current = (current + 1) % self.shards;
                     }
                 }

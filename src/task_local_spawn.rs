@@ -8,61 +8,80 @@ task_local! {
     static SHARD_POLICY: Cell<ShardPolicy>; // shard policy for buffer
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// These are the Shard Acquistion Policies supported by LFShardedRingBuf
-/// 
-/// Sweep: The task starts off at provided index (or random *initial index* if None) 
-/// and performs a full sweep around the buffer to acquire shards to 
+///
+/// Sweep: The task starts off at provided index (or random *initial index* if None)
+/// and performs a full sweep around the buffer to acquire shards to
 /// enqueue/dequeue items (shift by 1)
-/// 
+///
 /// RandomAndSweep: The task starts off at a random index always and performs a full
 /// sweep around the buffer to acquire shards to enqueue/dequeue items
-/// 
+///
 /// ShiftBy: The task starts off at provided index (or random *initial index* if None)
 /// and performs a sweep around the buffer using a provided shift value. To prevent
-/// tasks from being stuck in a shift by sweep, every two attempts of failing to acquire
+/// tasks from being stuck in a shift by sweep, every full attempt of failing to acquire
 /// a shard results in task's shard_id being incremented by one before applying shift
 /// by.
 pub enum ShardPolicy {
-    Sweep,
+    Sweep {
+        initial_index: Option<usize>,
+    },
     RandomAndSweep,
-    ShiftBy,
+    ShiftBy {
+        initial_index: Option<usize>,
+        shift: usize,
+    },
 }
 
-pub fn spawn_with_shard_index<F, T>(
-    initial_index: Option<usize>,
-    policy: ShardPolicy,
-    shift: usize,
-    fut: F,
-) -> JoinHandle<T>
+impl ShardPolicy {
+    fn discriminant(&self) -> u8 {
+        // SAFETY: Because `Self` is marked `repr(u8)`, its layout is a `repr(C)` `union`
+        // between `repr(C)` structs, each of which has the `u8` discriminant as its first
+        // field, so we can read the discriminant without offsetting the pointer.
+        unsafe { *<*const _>::from(self).cast::<u8>() }
+    }
+}
+
+pub fn spawn_with_shard_index<F, T>(policy: ShardPolicy, fut: F) -> JoinHandle<T>
 where
     F: std::future::Future<Output = T> + Send + 'static,
     T: Send + 'static,
 {
     match policy {
-        ShardPolicy::ShiftBy => spawn(SHIFT.scope(
+        ShardPolicy::Sweep { initial_index } => spawn(SHIFT.scope(
+            Cell::new(1),
+            SHARD_POLICY.scope(
+                Cell::new(policy),
+                SHARD_INDEX.scope(Cell::new(initial_index), fut),
+            ),
+        )),
+        ShardPolicy::RandomAndSweep => spawn(SHIFT.scope(
+            Cell::new(1),
+            SHARD_POLICY.scope(Cell::new(policy), SHARD_INDEX.scope(Cell::new(None), fut)),
+        )),
+        ShardPolicy::ShiftBy {
+            initial_index,
+            shift,
+        } => spawn(SHIFT.scope(
             Cell::new(shift),
             SHARD_POLICY.scope(
                 Cell::new(policy),
                 SHARD_INDEX.scope(Cell::new(initial_index), fut),
             ),
         )),
-        _ => spawn(SHIFT.scope(
-            Cell::new(1),
-            SHARD_POLICY.scope(Cell::new(policy), SHARD_INDEX.scope(Cell::new(None), fut)),
-        )),
     }
 }
 
 #[inline(always)]
-pub fn get_shard_ind() -> Option<usize> {
+pub(crate) fn get_shard_ind() -> Option<usize> {
     SHARD_INDEX.try_with(|cell| cell.get()).unwrap_or_else(|_| {
         panic!("SHARD_INDEX is not initialized. Use `.spawn_with_shard_index()`.")
     })
 }
 
 #[inline(always)]
-pub fn set_shard_ind(val: usize) {
+pub(crate) fn set_shard_ind(val: usize) {
     SHARD_INDEX
         .try_with(|cell| {
             cell.set(Some(val));
@@ -73,7 +92,7 @@ pub fn set_shard_ind(val: usize) {
 }
 
 #[inline(always)]
-pub fn get_shard_policy() -> ShardPolicy {
+pub(crate) fn get_shard_policy() -> ShardPolicy {
     SHARD_POLICY
         .try_with(|cell| cell.get())
         .unwrap_or_else(|_| {
@@ -82,7 +101,7 @@ pub fn get_shard_policy() -> ShardPolicy {
 }
 
 #[inline(always)]
-pub fn get_shift() -> usize {
+pub(crate) fn get_shift() -> usize {
     SHIFT
         .try_with(|cell| cell.get())
         .unwrap_or_else(|_| panic!("SHIFT is not initialized. Use `.spawn_with_shard_index()`."))

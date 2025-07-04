@@ -3,7 +3,7 @@ use kanal::bounded_async;
 use lf_shardedringbuf::ShardPolicy;
 use lf_shardedringbuf::{LFShardedRingBuf, spawn_with_shard_index};
 use std::{
-    sync::{Arc},
+    sync::Arc,
     time::{Duration, Instant},
 };
 use tokio::{sync::Barrier as AsyncBarrier, task};
@@ -11,10 +11,10 @@ use tokio::{sync::Barrier as AsyncBarrier, task};
 // comparing the benchmarking to
 // https://github.com/fereidani/rust-channel-benchmarks/tree/main?tab=readme-ov-file
 const MAX_SHARDS: [usize; 6] = [8, 16, 32, 64, 128, 256];
-const MAX_TASKS: usize = 8;
+const MAX_TASKS: usize = 4;
 const MAX_THREADS: usize = MAX_TASKS * 2;
-const CAPACITY: usize = 8192;
-const ITEM_PER_TASK: usize = 500000;
+const CAPACITY: usize = 1024;
+const ITEM_PER_TASK: usize = 250000;
 
 async fn kanal_mpmc_async_benchmark(c: usize) {
     let (s, r) = bounded_async::<usize>(c);
@@ -68,8 +68,12 @@ async fn benchmark_lock_free_sharded_buffer(capacity: usize, shards: usize) {
     for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
-        let handler: tokio::task::JoinHandle<usize> =
-            spawn_with_shard_index(Some(i), ShardPolicy::ShiftBy, MAX_TASKS, async move {
+        let handler: tokio::task::JoinHandle<usize> = spawn_with_shard_index(
+            ShardPolicy::ShiftBy {
+                initial_index: Some(i),
+                shift: MAX_TASKS,
+            },
+            async move {
                 barrier.wait().await;
                 let mut counter: usize = 0;
                 for _i in 0..ITEM_PER_TASK {
@@ -80,7 +84,8 @@ async fn benchmark_lock_free_sharded_buffer(capacity: usize, shards: usize) {
                     }
                 }
                 counter
-            });
+            },
+        );
         deq_threads.push(handler);
     }
 
@@ -88,13 +93,18 @@ async fn benchmark_lock_free_sharded_buffer(capacity: usize, shards: usize) {
     for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
-        let handler: tokio::task::JoinHandle<()> =
-            spawn_with_shard_index(Some(i), ShardPolicy::ShiftBy, MAX_TASKS, async move {
+        let handler: tokio::task::JoinHandle<()> = spawn_with_shard_index(
+            ShardPolicy::ShiftBy {
+                initial_index: Some(i),
+                shift: MAX_TASKS,
+            },
+            async move {
                 barrier.wait().await;
                 for i in 0..ITEM_PER_TASK {
                     rb.enqueue(i).await;
                 }
-            });
+            },
+        );
         enq_threads.push(handler);
     }
 
