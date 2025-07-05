@@ -1,5 +1,6 @@
 use crate::{
-    task_local_spawn::{get_shard_ind, get_shard_policy, get_shift, set_shard_ind}, ShardPolicy
+    ShardPolicy,
+    task_local_spawn::{get_shard_ind, get_shard_policy, get_shift, set_shard_ind},
 };
 use crossbeam_utils::CachePadded;
 use fastrand::usize as frand;
@@ -8,7 +9,7 @@ use std::{
     fmt::Debug,
     sync::atomic::{AtomicBool, Ordering},
 };
-use tokio::task::yield_now;
+use tokio::task::yield_now; // id for debugging purposes
 
 // Enum used in try_acquire_shard to determine if task
 // is enqueue or dequeue
@@ -24,7 +25,6 @@ enum Acquire {
 /// See the [Wikipedia article](https://en.wikipedia.org/wiki/Circular_buffer) for more info.
 #[derive(Debug)]
 pub struct LFShardedRingBuf<T> {
-    capacity: usize,
     shards: usize,
     max_capacity_per_shard: usize,
     // Used to determine which shard a thread should work on
@@ -33,6 +33,7 @@ pub struct LFShardedRingBuf<T> {
     // Multiple InnerRingBuffer structure based on num of shards
     // CachePadded to prevent false sharing
     inner_rb: Box<[CachePadded<InnerRingBuffer<T>>]>,
+    poisoned: Cell<bool>,
 }
 
 #[derive(Debug)]
@@ -92,7 +93,8 @@ impl<T> LFShardedRingBuf<T> {
         assert!(capacity > 0, "Capacity must be positive");
         assert!(shards > 0, "Shards must be positive");
         Self {
-            capacity: (capacity as f64 / shards as f64).ceil() as usize * shards,
+            // currently don't need this line
+            // capacity: (capacity as f64 / shards as f64).ceil() as usize * shards,
             shards,
             max_capacity_per_shard: (capacity + shards - 1) / shards,
             shard_jobs: {
@@ -111,6 +113,7 @@ impl<T> LFShardedRingBuf<T> {
                 }
                 vec.into_boxed_slice()
             },
+            poisoned: Cell::new(false),
         }
     }
 
@@ -176,6 +179,11 @@ impl<T> LFShardedRingBuf<T> {
         let mut attempt = 0;
 
         loop {
+            // if poisoned and empty, get out of this loop
+            if self.poisoned.get() && self.is_empty() {
+                break;
+            }
+
             if self.acquire_shard(current) {
                 if match acquire {
                     Acquire::Enqueue => !self.is_shard_full(current),
@@ -206,9 +214,6 @@ impl<T> LFShardedRingBuf<T> {
             // yield only once the enquerer or dequerer task has went one round through
             // the shard_job buffer
             if spins >= self.shards {
-                // For ShiftBy policy, if within two attempts of going around the
-                // buffer did not let it find a shard to place/pop an item
-                // then, increment current by 1 and reposition based off that
                 attempt += 1;
                 if acquire != Acquire::Poison {
                     if attempt % 1 == 0 && matches!(get_shard_policy(), ShardPolicy::ShiftBy { .. })
@@ -262,6 +267,12 @@ impl<T> LFShardedRingBuf<T> {
             None => self.try_acquire_shard(Acquire::Poison).await,
         };
 
+        // If poisoned, do not enqueue this item.
+        if self.poisoned.get() {
+            println!("Can't enqueue anymore. Ring buffer is poisoned.");
+            return;
+        }
+
         self.enqueue_in_shard(current, item);
         self.release_and_increment_shard(current);
     }
@@ -272,6 +283,10 @@ impl<T> LFShardedRingBuf<T> {
     ///
     /// Space complexity: O(1)
     pub async fn enqueue(&self, item: T) {
+        if self.poisoned.get() {
+            println!("Can't enqueue anymore. Ring buffer is poisoned.");
+            return;
+        }
         self.enqueue_item(Some(item)).await;
     }
 
@@ -300,25 +315,54 @@ impl<T> LFShardedRingBuf<T> {
     }
 
     /// Retrieves an item of type T from the RingBuffer if an item exists in the buffer.
+    /// If the ring buffer is set with a poisoned flag or received a poison pill,
+    /// this method will return None.
     ///
     /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
     ///
     /// Space Complexity: O(1)
     pub async fn dequeue(&self) -> Option<T> {
+        if self.poisoned.get() && self.is_empty() {
+            return None;
+        }
         let current = self.try_acquire_shard(Acquire::Dequeue).await;
+        if self.poisoned.get() && self.is_empty() {
+            return None;
+        }
         let item = self.dequeue_in_shard(current);
         self.release_and_decrement_shard(current);
         item
     }
 
-    /// Poisons the RingBuffer such that you can use this to denote when dequerer threads
-    /// are done with working.
+    /// Poisons the RingBuffer such that you can use this to denote when dequerer tasks
+    /// are done with working. Use this ONLY if you are fine with early termination of
+    /// dequerer tasks because it's possible for valid jobs to exist in the ring buffer
+    /// that have not been dequeued yet.
     ///
     /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
     ///
     /// Space complexity: O(1)
     pub async fn poison_deq(&self) {
+        if self.poisoned.get() {
+            println!("Can't enqueue anymore. Ring buffer is poisoned.");
+            return;
+        }
         let _ = self.enqueue_item(None).await;
+    }
+
+    /// Sets the poison flag of the ring buffer to true. This will prevent enquerer
+    /// from enqueuing anymore jobs if this method is called while enqueues are occuring.
+    /// However you can use this if you want graceful exit of dequerer tasks completing
+    /// all available jobs enqueued first before exiting.
+    #[inline(always)]
+    pub async fn poison(&self) {
+        self.poisoned.set(true);
+    }
+
+    /// Clears the poison flag.
+    #[inline(always)]
+    pub async fn clear_poison(&self) {
+        self.poisoned.set(false);
     }
 
     /// Clears the LFShardedRingBuf back to an empty state.
@@ -331,17 +375,10 @@ impl<T> LFShardedRingBuf<T> {
     ///
     /// Space complexity: O(1)
     pub async fn clear(&self) {
-        let mut attempt = 0;
         // acquire shards
         for i in 0..self.shard_jobs.len() {
             while !self.acquire_shard(i) {
-                if attempt < 10 {
-                    std::hint::spin_loop();
-                    attempt += 1;
-                } else {
-                    yield_now().await;
-                    attempt = 0;
-                }
+                yield_now().await;
             }
         }
 
@@ -363,37 +400,25 @@ impl<T> LFShardedRingBuf<T> {
         }
     }
 
-    /// Checks whether the LFShardedRingBuf is empty or not
+    /// Checks each shard in LFShardedRingBuf to see if it's empty.
+    /// Note that this ring buffer does not apply a global/full lock on shards
+    /// as shards are each checked for emptiness.
+    /// An enquerer task can enqueue an item while this check is occurring.
+    /// It's recommended to use this only after all enqueuing operations have
+    /// occurred.
     ///
-    /// Time Complexity: O(s * s_t) where s_t is how long it takes to acquire shard(s)
+    /// Time Complexity: O(s) where s is the number of shards
     ///
     /// Space Complexity: O(1)
-    pub async fn is_empty(&self) -> bool {
-        let mut attempt = 0;
-        // acquire shards
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
         for i in 0..self.shard_jobs.len() {
-            while !self.acquire_shard(i) {
-                if attempt < 10 {
-                    std::hint::spin_loop();
-                    attempt += 1;
-                } else {
-                    yield_now().await;
-                    attempt = 0;
-                }
+            if !self.is_shard_empty(i) {
+                return false;
             }
         }
-
-        let res = self
-            .shard_jobs
-            .iter()
-            .all(|shard| shard.job_count.get() == 0);
-
-        // release shards
-        for i in 0..self.shard_jobs.len() {
-            self.release_shard(i);
-        }
-
-        res
+        // if it got to this point, then indeed it was empty at this point
+        return true;
     }
 
     /// Checks to see if a specific shard is empty
@@ -402,37 +427,26 @@ impl<T> LFShardedRingBuf<T> {
         self.shard_jobs[shard_ind].job_count.get() == 0
     }
 
-    /// Checks whether the LFShardedRingBuf is full or not
+    /// Checks each shard in LFShardedRingBuf to see if it's full.
+    /// Note that this ring buffer does not apply a global/full lock on shards
+    /// as shards are each checked for fullness.
+    /// A dequerer task can dequeue an item while this check is occurring.
+    /// It's recommended to use this while dequeuing operations are not
+    /// occurring.
     ///
-    /// Time Complexity: O(s * s_t) where s_t is how long it takes to acquire shard(s)
+    /// Time Complexity: O(s) where s is the number of shards
     ///
     /// Space Complexity: O(1)
-    pub async fn is_full(&self) -> bool {
-        let mut attempt = 0;
-        // acquire shard
+    #[inline(always)]
+    pub fn is_full(&self) -> bool {
         for i in 0..self.shard_jobs.len() {
-            while !self.acquire_shard(i) {
-                if attempt < 10 {
-                    std::hint::spin_loop();
-                    attempt += 1;
-                } else {
-                    yield_now().await;
-                    attempt = 0;
-                }
+            if !self.is_shard_full(i) {
+                return false;
             }
         }
 
-        let res = self
-            .shard_jobs
-            .iter()
-            .all(|shard| shard.job_count.get() == self.max_capacity_per_shard);
-
-        // release shards
-        for i in 0..self.shard_jobs.len() {
-            self.release_shard(i);
-        }
-
-        res
+        // if it got to this point, all the shards were indeed full
+        return true;
     }
 
     /// Checks to see if a specific shard is full
@@ -452,16 +466,9 @@ impl<T> LFShardedRingBuf<T> {
             return None;
         }
 
-        let mut attempt = 0;
         // spin trying to grab the shard
         while !self.acquire_shard(shard_ind) {
-            if attempt < 10 {
-                std::hint::spin_loop();
-                attempt += 1;
-            } else {
-                yield_now().await;
-                attempt = 0;
-            }
+            yield_now().await;
         }
 
         // grab enq val
@@ -485,16 +492,9 @@ impl<T> LFShardedRingBuf<T> {
             return None;
         }
 
-        let mut attempt = 0;
         // spin trying to grab the shard
         while !self.acquire_shard(shard_ind) {
-            if attempt < 10 {
-                std::hint::spin_loop();
-                attempt += 1;
-            } else {
-                yield_now().await;
-                attempt = 0;
-            }
+            yield_now().await;
         }
 
         // grab deq ind val
@@ -531,16 +531,9 @@ impl<T> LFShardedRingBuf<T> {
             return None;
         }
 
-        let mut attempt = 0;
         // spin trying to grab the shard
         while !self.acquire_shard(shard_ind) {
-            if attempt < 10 {
-                std::hint::spin_loop();
-                attempt += 1;
-            } else {
-                yield_now().await;
-                attempt = 0;
-            }
+            yield_now().await;
         }
 
         // clone item in shard
@@ -573,16 +566,9 @@ impl<T> LFShardedRingBuf<T> {
             return None;
         }
 
-        let mut attempt = 0;
         // spin trying to grab the shard
         while !self.acquire_shard(shard_ind) {
-            if attempt < 10 {
-                std::hint::spin_loop();
-                attempt += 1;
-            } else {
-                yield_now().await;
-                attempt = 0;
-            }
+            yield_now().await;
         }
 
         // clone items in shard
@@ -617,17 +603,10 @@ impl<T> LFShardedRingBuf<T> {
     where
         T: Clone,
     {
-        let mut attempt = 0;
         // acquire shards
         for i in 0..self.shard_jobs.len() {
             while !self.acquire_shard(i) {
-                if attempt < 10 {
-                    std::hint::spin_loop();
-                    attempt += 1;
-                } else {
-                    yield_now().await;
-                    attempt = 0;
-                }
+                yield_now().await;
             }
         }
 
@@ -665,17 +644,10 @@ impl<T> LFShardedRingBuf<T> {
     where
         T: Debug,
     {
-        let mut attempt = 0;
         // sping to acquire shard
         for i in 0..self.shard_jobs.len() {
             while !self.acquire_shard(i) {
-                if attempt < 10 {
-                    std::hint::spin_loop();
-                    attempt += 1;
-                } else {
-                    yield_now().await;
-                    attempt = 0;
-                }
+                yield_now().await;
             }
         }
 

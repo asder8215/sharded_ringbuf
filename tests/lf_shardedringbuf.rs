@@ -17,8 +17,12 @@ async fn test_counter() {
     // Spawn MAX_TASKS dequerer *tasks*
     for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
-        let handler =
-            spawn_with_shard_index(ShardPolicy::ShiftBy{initial_index: Some(i), shift: MAX_TASKS}, async move {
+        let handler = spawn_with_shard_index(
+            ShardPolicy::ShiftBy {
+                initial_index: Some(i),
+                shift: MAX_TASKS,
+            },
+            async move {
                 let rb = rb.clone();
                 let mut counter: usize = 0;
                 loop {
@@ -28,20 +32,27 @@ async fn test_counter() {
                         None => break,
                     }
                 }
+                // println!("I finished dequeuing!");
                 counter
-            });
+            },
+        );
         deq_threads.push(handler);
     }
 
     // Just spawn a single enquerer task
     {
         let rb = Arc::clone(&rb);
-        let enq_handler = spawn_with_shard_index(ShardPolicy::Sweep{initial_index: None}, async move {
-            let rb = rb.clone();
-            for _i in 0..2 * MAX_ITEMS {
-                rb.enqueue(20).await;
-            }
-        });
+        let enq_handler = spawn_with_shard_index(
+            ShardPolicy::Sweep {
+                initial_index: None,
+            },
+            async move {
+                let rb = rb.clone();
+                for _i in 0..2 * MAX_ITEMS {
+                    rb.enqueue(20).await;
+                }
+            },
+        );
         enq_threads.push(enq_handler);
     }
 
@@ -49,10 +60,9 @@ async fn test_counter() {
         enq.await.unwrap();
     }
 
-    for _ in 0..MAX_TASKS {
-        // println!("Does this occur?");
-        rb.poison_deq().await;
-    }
+    // guarantees that the dequerer finish remaining jobs in the buffer
+    // before exiting
+    rb.poison().await;
 
     let mut items_taken: usize = 0;
     while let Some(curr_thread) = deq_threads.pop() {
@@ -81,8 +91,12 @@ async fn benchmark_lock_free_sharded_buffer() {
     for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
-        let handler: tokio::task::JoinHandle<usize> =
-            spawn_with_shard_index(ShardPolicy::ShiftBy{initial_index: Some(i), shift: MAX_TASKS}, async move {
+        let handler: tokio::task::JoinHandle<usize> = spawn_with_shard_index(
+            ShardPolicy::ShiftBy {
+                initial_index: Some(i),
+                shift: MAX_TASKS,
+            },
+            async move {
                 barrier.wait().await;
                 let mut counter: usize = 0;
                 for _i in 0..CAPACITY {
@@ -93,7 +107,8 @@ async fn benchmark_lock_free_sharded_buffer() {
                     }
                 }
                 counter
-            });
+            },
+        );
         deq_threads.push(handler);
     }
 
@@ -101,13 +116,18 @@ async fn benchmark_lock_free_sharded_buffer() {
     for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
-        let handler: tokio::task::JoinHandle<()> =
-            spawn_with_shard_index(ShardPolicy::ShiftBy{initial_index: Some(i), shift: MAX_TASKS}, async move {
+        let handler: tokio::task::JoinHandle<()> = spawn_with_shard_index(
+            ShardPolicy::ShiftBy {
+                initial_index: Some(i),
+                shift: MAX_TASKS,
+            },
+            async move {
                 barrier.wait().await;
                 for i in 0..CAPACITY {
                     rb.enqueue(i).await;
                 }
-            });
+            },
+        );
         enq_threads.push(handler);
     }
 
