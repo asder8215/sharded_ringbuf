@@ -6,7 +6,10 @@ A lock-free, sharded, cache-aware MPMC ring buffer for Rust. Performant for high
 * It is lock-free; only uses atomic primitives and no mutexes or rwlocks
 * False sharing is avoided through cache padding the shards
 * It uses tokio's task local variables as a shard index reference for tasks to effectively acquire a shard to enqueue/dequeue on (moves in a ring buffer like manner).
-* Exponential backoff + random jitter (capped at 20 ms) used to yield CPU in functions that loops.
+* ~~Exponential backoff + random jitter (capped at 20 ms) used to yield CPU in functions that loops.~~
+    * This backoff method was removed since it introduced a bit more delay; instead, full sweep around the
+    shards ccalls tokio's `yield_now()` function to put the running task to the back of the scheduled list
+* Different shard acquisition policies are provided: `Sweep`, `RandomAndSweep`, and `ShiftBy` (see `src/task_local_spawn.rs` for more info) 
 * It can perform in an async multithreaded or single threaded environment (optimal for multiple producer, multiple consumer situations though)
 
 # Benchmark Results
