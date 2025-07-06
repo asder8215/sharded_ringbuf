@@ -2,6 +2,17 @@
 name = "lf-shardedringbuf"
 version = "0.1.0"
 edition = "2024"
+rust-version="1.87.0"
+description = """
+An async, lock-free, sharded, cache-aware SPSC/MPSC/MPMC ring buffer in Rust.
+"""
+authors= ["Mahdi Ali-Raihan mma2268@columbia.edu"]
+license = "MIT"
+keywords = ["sharding", "async", "ring-buffer", "mpmc", "spsc"]
+categories = ["concurrency"]
+readme = "README.md"
+repository = "https://github.com/asder8215/lf-shardedringbuf"
+homepage = "https://github.com/asder8215/lf-shardedringbuf"
 
 [dependencies]
 crossbeam-utils = "0.8.21"

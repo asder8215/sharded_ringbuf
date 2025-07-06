@@ -162,4 +162,8 @@ Typical best performance for this buffer seems to come from matching the number 
 * Enqueuing/Dequeuing items in batches to take advantage of Auto-Vectorization compiler optimizations
 * Play around with shard acquiring policies, so there are fewer failing calls to `self.shard_jobs[current].occupied.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok()`. For example, introduce a `SweepBy` and `SweepAndShiftBy` policies so that the task is yielded through less attempts of acquiring a shard.
 
-# 
+# Contribution
+If you'd like to contribute (be it through documentation, testing, providing feedback), feel free to do so!
+
+# License
+This project is licensed under the [MIT License](LICENSE).
