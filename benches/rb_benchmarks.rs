@@ -1,7 +1,7 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use kanal::bounded_async;
 use lf_shardedringbuf::ShardPolicy;
-use lf_shardedringbuf::{LFShardedRingBuf, spawn_with_shard_index};
+use lf_shardedringbuf::{LFShardedRingBuf, spawn_buffer_task};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -26,23 +26,23 @@ async fn kanal_mpmc_async_benchmark(c: usize) {
     let mut handles = Vec::new();
 
     for _ in 0..MAX_TASKS {
-        let tx = s.clone();
-        let barrier = Arc::clone(&barrier);
+        let rx = r.clone();
+        // let barrier = Arc::clone(&barrier);
         handles.push(task::spawn(async move {
-            barrier.wait().await;
-            for i in 0..ITEM_PER_TASK {
-                tx.send(i).await.unwrap();
+            // barrier.wait().await;
+            for _ in 0..ITEM_PER_TASK {
+                rx.recv().await.unwrap();
             }
         }));
     }
 
     for _ in 0..MAX_TASKS {
-        let rx = r.clone();
-        let barrier = Arc::clone(&barrier);
+        let tx = s.clone();
+        // let barrier = Arc::clone(&barrier);
         handles.push(task::spawn(async move {
-            barrier.wait().await;
-            for _ in 0..ITEM_PER_TASK {
-                rx.recv().await.unwrap();
+            // barrier.wait().await;
+            for i in 0..ITEM_PER_TASK {
+                tx.send(i).await.unwrap();
             }
         }));
     }
@@ -64,17 +64,36 @@ async fn benchmark_lock_free_sharded_buffer(capacity: usize, shards: usize) {
     let mut deq_threads = Vec::with_capacity(MAX_TASKS);
     let mut enq_threads = Vec::with_capacity(MAX_TASKS);
 
-    // spawn deq tasks with shift by policy
+    // spawn enq tasks with shift by policy
     for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
-        let barrier = Arc::clone(&barrier);
-        let handler: tokio::task::JoinHandle<usize> = spawn_with_shard_index(
+        // let barrier = Arc::clone(&barrier);
+        let handler: tokio::task::JoinHandle<()> = spawn_buffer_task(
             ShardPolicy::ShiftBy {
                 initial_index: Some(i),
                 shift: MAX_TASKS,
             },
             async move {
-                barrier.wait().await;
+                // barrier.wait().await;
+                for i in 0..ITEM_PER_TASK {
+                    rb.enqueue(i).await;
+                }
+            },
+        );
+        enq_threads.push(handler);
+    }
+
+    // spawn deq tasks with shift by policy
+    for i in 0..MAX_TASKS {
+        let rb = Arc::clone(&rb);
+        // let barrier = Arc::clone(&barrier);
+        let handler: tokio::task::JoinHandle<usize> = spawn_buffer_task(
+            ShardPolicy::ShiftBy {
+                initial_index: Some(i),
+                shift: MAX_TASKS,
+            },
+            async move {
+                // barrier.wait().await;
                 let mut counter: usize = 0;
                 for _i in 0..ITEM_PER_TASK {
                     let item = rb.dequeue().await;
@@ -87,25 +106,6 @@ async fn benchmark_lock_free_sharded_buffer(capacity: usize, shards: usize) {
             },
         );
         deq_threads.push(handler);
-    }
-
-    // spawn enq tasks with shift by policy
-    for i in 0..MAX_TASKS {
-        let rb = Arc::clone(&rb);
-        let barrier = Arc::clone(&barrier);
-        let handler: tokio::task::JoinHandle<()> = spawn_with_shard_index(
-            ShardPolicy::ShiftBy {
-                initial_index: Some(i),
-                shift: MAX_TASKS,
-            },
-            async move {
-                barrier.wait().await;
-                for i in 0..ITEM_PER_TASK {
-                    rb.enqueue(i).await;
-                }
-            },
-        );
-        enq_threads.push(handler);
     }
 
     // Wait for enqueuers

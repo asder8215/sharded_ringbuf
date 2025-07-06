@@ -1,24 +1,152 @@
-# lf-shardbuf
-A lock-free, sharded, cache-aware MPMC ring buffer for Rust. Performant for high concurrency and async.
+# lf-shardedringbuf
+A lock-free, sharded, cache-aware SPSC/MPSC/MPMC ring buffer for Rust. Performant for high concurrency and async.
 
 # Features
 * It uses multiple smaller simple ring buffers each with capacity = requested capacity / # of shards (each ring buffer is considered a shard)
 * It is lock-free; only uses atomic primitives and no mutexes or rwlocks
 * False sharing is avoided through cache padding the shards
-* It uses tokio's task local variables as a shard index reference for tasks to effectively acquire a shard to enqueue/dequeue on (moves in a ring buffer like manner).
+* It uses tokio's task local variables as a shard index reference and to remember the shard acquistion policy strategy to take for tasks to effectively acquire a shard to enqueue/dequeue on.
 * ~~Exponential backoff + random jitter (capped at 20 ms) used to yield CPU in functions that loops.~~
     * This backoff method was removed since it introduced a bit more delay; instead, full sweep around the shards calls tokio's `yield_now()` function to put the running task to the back of the scheduled list
 * Different shard acquisition policies are provided: `Sweep`, `RandomAndSweep`, and `ShiftBy` (see `src/task_local_spawn.rs` for more info) 
-* It can perform in an async multithreaded or single threaded environment (optimal for multiple producer, multiple consumer situations though)
+* It can perform in an async multithreaded or single threaded environment (optimal for multiple producer, multiple consumer situations)
+
+# Example Usage
+The following are examples of how to use LFShardedRingBuf:
+
+If enqueue and dequeue tasks are done with a limited number of enqueue/dequeue operations
+```rust
+    let max_items = 1024;
+    let shards = 8;
+    let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(max_items, shards));
+
+    let mut deq_threads = Vec::with_capacity(MAX_TASKS);
+    let mut enq_threads = Vec::with_capacity(MAX_TASKS);
+
+    // spawn enq tasks with shift by policy
+    for i in 0..MAX_TASKS {
+        let rb = Arc::clone(&rb);
+        let handler: tokio::task::JoinHandle<()> = spawn_buffer_task(
+            ShardPolicy::ShiftBy {
+                initial_index: Some(i),
+                shift: MAX_TASKS,
+            },
+            async move {
+                for i in 0..ITEM_PER_TASK {
+                    rb.enqueue(i).await;
+                }
+            },
+        );
+        enq_threads.push(handler);
+    }
+
+    // spawn deq tasks with shift by policy
+    for i in 0..MAX_TASKS {
+        let rb = Arc::clone(&rb);
+        let handler: tokio::task::JoinHandle<usize> = spawn_buffer_task(
+            ShardPolicy::ShiftBy {
+                initial_index: Some(i),
+                shift: MAX_TASKS,
+            },
+            async move {
+                let mut counter: usize = 0;
+                for _i in 0..ITEM_PER_TASK {
+                    let item = rb.dequeue().await;
+                    match item {
+                        Some(_) => counter += 1,
+                        None => break,
+                    }
+                }
+                counter
+            },
+        );
+        deq_threads.push(handler);
+    }
+
+    // Wait for enqueuers
+    for enq in enq_threads {
+        enq.await.unwrap();
+    }
+
+    // Wait for dequeuers
+    for deq in deq_threads {
+        deq.await.unwrap();
+    }
+```
+
+If dequeue tasks are performing in a loop and enqueue task(s) is performing with limited operations
+```rust
+    const MAX_ITEMS: usize = 100;
+    const MAX_SHARDS: usize = 10;
+    const MAX_TASKS: usize = 5;
+    let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+    let mut deq_threads = Vec::with_capacity(MAX_TASKS.try_into().unwrap());
+    let mut enq_threads = Vec::new();
+
+    // Spawn MAX_TASKS dequerer *tasks*
+    for i in 0..MAX_TASKS {
+        let rb = Arc::clone(&rb);
+        let handler = spawn_buffer_task(
+            ShardPolicy::ShiftBy {
+                initial_index: Some(i),
+                shift: MAX_TASKS,
+            },
+            async move {
+                let rb = rb.clone();
+                let mut counter: usize = 0;
+                loop {
+                    let item = rb.dequeue().await;
+                    match item {
+                        Some(_) => counter += 1,
+                        None => break,
+                    }
+                }
+                counter
+            },
+        );
+        deq_threads.push(handler);
+    }
+
+    // Just spawn a single enquerer task
+    {
+        let rb = Arc::clone(&rb);
+        let enq_handler = spawn_buffer_task(
+            ShardPolicy::Sweep {
+                initial_index: None,
+            },
+            async move {
+                let rb = rb.clone();
+                for _i in 0..2 * MAX_ITEMS {
+                    rb.enqueue(20).await;
+                }
+            },
+        );
+        enq_threads.push(enq_handler);
+    }
+
+    for enq in enq_threads {
+        enq.await.unwrap();
+    }
+
+    // poison for dequer tasks to exit gracefully, completing any remaining jobs
+    // on the buffer 
+    rb.poison().await;
+
+    let mut items_taken: usize = 0;
+    while let Some(curr_thread) = deq_threads.pop() {
+        items_taken += curr_thread.await.unwrap();
+    }
+```
+If enquerer tasks need be in a loop, you can use the `async_stream` crate and hook up enquerer tasks to a stream, where you can denote that a `None` value returned by the stream means that it terminated.
 
 # Benchmark Results
-Benchmarking was performed in a similar style to [Rust Channel Benchmarks](https://github.com/fereidani/rust-channel-benchmarks/tree/main). However, look at [Kanal Repository](https://github.com/fereidani/kanal?tab=readme-ov-file) for an updated benchmark timing on all the top repos. Moreover, I only tested it on the Bounded Channel with Size N in MPMC usize case. In essence, I used:
+I tried benchmarking this ring buffer (and comparing it with kanal async) with the following parameters:
 * 4 tasks for enqueuing and 4 tasks for dequeuing (each iterating through 250,000 usize)
 * 8 worker threads
 * Total capacity of the buffer is 1024 entries
 * Varying shards value I experimented on starting (8, 16, 32, 64, 128) using a ShiftBy policies with enquerer tasks operating on shard index 0-3 initially respectively, dequerer tasks operating on shard index 0-3 respectively with a shift of 4.
 
-The following are timing results using `cargo bench` with varying shards in the order mentioned above (with and without barrier synchronization respectively):
+The following are timing results using `cargo bench` with varying shards in the order mentioned above (with barrier synchronization respectively):
 
 
 ![MPMC usize Benchmark Results with Barrier + ShiftBy Policies](readme_imgs/mpmc_usize_bm_with_shard_policies.png)
@@ -28,25 +156,10 @@ The following are timing results using `cargo bench` with varying shards in the 
 
 ![MPMC usize Benchmark Results without Barrier](readme_imgs/mpmc_usize_without_barrier.png) -->
 
-~~In the with barrier scenario:~~
-~~* 8 shards ~ can possibly handle ~36.10 million operations per sec~~
-~~* 16 shards ~ can possibly handle ~62.92 million operations per sec~~
-~~* 32 shards ~ can possibly handle ~65.05 million operations per sec~~
-~~* 64 shards ~ can possibly handle ~64.46 million operations per sec~~
-~~* 128 shards ~ can possibly handle ~64.45 million operations per sec~~
-
-~~In the without barrier scenario:~~
-~~* 8 shards ~ can possibly handle ~36.60 million operations per sec~~
-~~* 16 shards ~ can possibly handle ~65.43 million operations per sec~~
-~~* 32 shards ~ can possibly handle ~68.40 million operations per sec~~
-~~* 64 shards ~ can possibly handle ~72.67 million operations per sec~~
-~~* 128 shards ~ can possibly handle ~82.32 million operations per sec~~
-
-~~Note: An operation here means either an enqueue or dequeue~~
-
-~~The barrier synchronization has an effect in the code because otherwise the dequeue tasks are likely to trigger the backoff policy and sleep initally. With increasing shard count, there are more unoccupied shards that an enquerer can put its item in and less conflicts with the dequerer or other enquerer tasks acquiring the shard. In fact, it's actually the dequerer that may experience a delay because it keeps acquiring the shards too quickly only to find out that the shard has no jobs inside (more `self.shard_jobs[current].occupied.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok()` calls). In the future, I may need to plan out better ways for a dequerer task to be given a shard that has a job inside.~~
+Typical best performance for this buffer seems to come from matching the number of shards with the maximum number of enquerer/dequerer tasks spawned and then using ShiftBy policy ensuring that each enquerer tasks and dequerer tasks are at a unique initial index with respect to each other enquerer/dequerer task with the ideal shift for each enquerer/dequerer task being the number of enquerer/dequerer tasks spawned respectively (i.e. if you spawned 5 dequerer tasks, you want each task to have an initial shard index of 0, ..., 4 with a shift 5 and if you spawned 10 enquerer tasks, you want each task to have an intial shard index of 0, ..., 9 with a shift of 10).
 
 # Future Additions/Thoughts
 * Enqueuing/Dequeuing items in batches to take advantage of Auto-Vectorization compiler optimizations
 * Play around with shard acquiring policies, so there are fewer failing calls to `self.shard_jobs[current].occupied.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok()`. For example, introduce a `SweepBy` and `SweepAndShiftBy` policies so that the task is yielded through less attempts of acquiring a shard.
-* Backoff policies may be experimented on in a lower shard + higher thread/task environment.
+
+# 

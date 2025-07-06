@@ -1,6 +1,6 @@
 use lf_shardedringbuf::LFShardedRingBuf;
 use lf_shardedringbuf::ShardPolicy;
-use lf_shardedringbuf::spawn_with_shard_index;
+use lf_shardedringbuf::spawn_buffer_task;
 use std::sync::Arc;
 use tokio::sync::Barrier as AsyncBarrier;
 
@@ -17,7 +17,7 @@ async fn test_counter() {
     // Spawn MAX_TASKS dequerer *tasks*
     for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
-        let handler = spawn_with_shard_index(
+        let handler = spawn_buffer_task(
             ShardPolicy::ShiftBy {
                 initial_index: Some(i),
                 shift: MAX_TASKS,
@@ -42,7 +42,7 @@ async fn test_counter() {
     // Just spawn a single enquerer task
     {
         let rb = Arc::clone(&rb);
-        let enq_handler = spawn_with_shard_index(
+        let enq_handler = spawn_buffer_task(
             ShardPolicy::Sweep {
                 initial_index: None,
             },
@@ -91,7 +91,7 @@ async fn benchmark_lock_free_sharded_buffer() {
     for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
-        let handler: tokio::task::JoinHandle<usize> = spawn_with_shard_index(
+        let handler: tokio::task::JoinHandle<usize> = spawn_buffer_task(
             ShardPolicy::ShiftBy {
                 initial_index: Some(i),
                 shift: MAX_TASKS,
@@ -116,7 +116,7 @@ async fn benchmark_lock_free_sharded_buffer() {
     for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
         let barrier = Arc::clone(&barrier);
-        let handler: tokio::task::JoinHandle<()> = spawn_with_shard_index(
+        let handler: tokio::task::JoinHandle<()> = spawn_buffer_task(
             ShardPolicy::ShiftBy {
                 initial_index: Some(i),
                 shift: MAX_TASKS,
