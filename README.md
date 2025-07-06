@@ -1,5 +1,5 @@
 # lf-shardedringbuf
-A lock-free, sharded, cache-aware SPSC/MPSC/MPMC ring buffer for Rust. Performant for high concurrency and async.
+An async, lock-free, sharded, cache-aware SPSC/MPSC/MPMC ring buffer in Rust.
 
 # Features
 * It uses multiple smaller simple ring buffers each with capacity = requested capacity / # of shards (each ring buffer is considered a shard)
