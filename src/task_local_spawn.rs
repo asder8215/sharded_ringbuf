@@ -34,7 +34,7 @@ pub enum ShardPolicy {
     },
 }
 
-pub fn spawn_with_shard_index<F, T>(policy: ShardPolicy, fut: F) -> JoinHandle<T>
+pub fn spawn_buffer_task<F, T>(policy: ShardPolicy, fut: F) -> JoinHandle<T>
 where
     F: std::future::Future<Output = T> + Send + 'static,
     T: Send + 'static,
@@ -66,9 +66,9 @@ where
 
 #[inline(always)]
 pub(crate) fn get_shard_ind() -> Option<usize> {
-    SHARD_INDEX.try_with(|cell| cell.get()).unwrap_or_else(|_| {
-        panic!("SHARD_INDEX is not initialized. Use `.spawn_with_shard_index()`.")
-    })
+    SHARD_INDEX
+        .try_with(|cell| cell.get())
+        .unwrap_or_else(|_| panic!("SHARD_INDEX is not initialized. Use `.spawn_buffer_task()`."))
 }
 
 #[inline(always)]
@@ -77,23 +77,19 @@ pub(crate) fn set_shard_ind(val: usize) {
         .try_with(|cell| {
             cell.set(Some(val));
         })
-        .unwrap_or_else(|_| {
-            panic!("SHARD_INDEX is not initialized. Use `.spawn_with_shard_index()`.")
-        });
+        .unwrap_or_else(|_| panic!("SHARD_INDEX is not initialized. Use `.spawn_buffer_task()`."));
 }
 
 #[inline(always)]
 pub(crate) fn get_shard_policy() -> ShardPolicy {
     SHARD_POLICY
         .try_with(|cell| cell.get())
-        .unwrap_or_else(|_| {
-            panic!("SHARD_POLICY is not initialized. Use `.spawn_with_shard_index()`.")
-        })
+        .unwrap_or_else(|_| panic!("SHARD_POLICY is not initialized. Use `.spawn_buffer_task()`."))
 }
 
 #[inline(always)]
 pub(crate) fn get_shift() -> usize {
     SHIFT
         .try_with(|cell| cell.get())
-        .unwrap_or_else(|_| panic!("SHIFT is not initialized. Use `.spawn_with_shard_index()`."))
+        .unwrap_or_else(|_| panic!("SHIFT is not initialized. Use `.spawn_buffer_task()`."))
 }
