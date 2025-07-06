@@ -176,7 +176,6 @@ impl<T> LFShardedRingBuf<T> {
         };
 
         let mut spins = 0;
-        // let mut attempt = 0;
 
         loop {
             // if poisoned and empty, get out of this loop
@@ -214,14 +213,10 @@ impl<T> LFShardedRingBuf<T> {
             // yield only once the enquerer or dequerer task has went one round through
             // the shard_job buffer
             if spins >= self.shards {
-                // attempt += 1;
                 if acquire != Acquire::Poison
                     && matches!(get_shard_policy(), ShardPolicy::ShiftBy { .. })
                 {
-                    // if attempt % 1 == 0 && matches!(get_shard_policy(), ShardPolicy::ShiftBy { .. })
-                    // {
                     current = (current + 1) % self.shards;
-                    // }
                 }
                 spins = 0;
                 yield_now().await;
