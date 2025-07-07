@@ -1,6 +1,6 @@
 use crate::{
     ShardPolicy,
-    task_local_spawn::{get_shard_ind, get_shard_policy, get_shift, set_shard_ind},
+    task_locals::{get_shard_ind, get_shard_policy, get_shift, set_shard_ind},
 };
 use crossbeam_utils::CachePadded;
 use fastrand::usize as frand;
@@ -9,7 +9,7 @@ use std::{
     fmt::Debug,
     sync::atomic::{AtomicBool, Ordering},
 };
-use tokio::task::yield_now; // id for debugging purposes
+use tokio::task::yield_now;
 
 // Enum used in try_acquire_shard to determine if task
 // is enqueue or dequeue
@@ -140,11 +140,11 @@ impl<T> LFShardedRingBuf<T> {
     ///
     /// Time Complexity: O(s_t) where s_t comes from the consideration below:
     ///
-    /// The time complexity of this depends on number of enquerer and
-    /// dequerer tasks there are, shard count, and shard policies;
-    /// ideally, you would have similar number of enquerer and dequerer tasks
+    /// The time complexity of this depends on number of enqueuers and
+    /// dequeuers tasks there are, shard count, and shard policies;
+    /// ideally, you would have similar number of enqueuers and dequeuers tasks
     /// with the number of shards being greater than or equal to
-    /// max(enquerer task count, dequeurer task count)
+    /// max(enqueuers task count, dequeurer task count)
     /// so that each task can find a shard to enqueue or dequeue off from
     ///
     /// Space Complexity: O(1)
@@ -210,7 +210,7 @@ impl<T> LFShardedRingBuf<T> {
                 spins += 1;
             }
 
-            // yield only once the enquerer or dequerer task has went one round through
+            // yield only once the enqueuers or dequeuers task has went one round through
             // the shard_job buffer
             if spins >= self.shards {
                 if acquire != Acquire::Poison
@@ -331,9 +331,9 @@ impl<T> LFShardedRingBuf<T> {
         item
     }
 
-    /// Poisons the RingBuffer such that you can use this to denote when dequerer tasks
+    /// Poisons the RingBuffer such that you can use this to denote when dequeuers tasks
     /// are done with working. Use this ONLY if you are fine with early termination of
-    /// dequerer tasks because it's possible for valid jobs to exist in the ring buffer
+    /// dequeuer tasks because it's possible for valid jobs to exist in the ring buffer
     /// that have not been dequeued yet.
     ///
     /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
@@ -347,9 +347,9 @@ impl<T> LFShardedRingBuf<T> {
         let _ = self.enqueue_item(None).await;
     }
 
-    /// Sets the poison flag of the ring buffer to true. This will prevent enquerer
+    /// Sets the poison flag of the ring buffer to true. This will prevent enqueuers
     /// from enqueuing anymore jobs if this method is called while enqueues are occuring.
-    /// However you can use this if you want graceful exit of dequerer tasks completing
+    /// However you can use this if you want graceful exit of dequeuers tasks completing
     /// all available jobs enqueued first before exiting.
     #[inline(always)]
     pub async fn poison(&self) {
@@ -400,7 +400,7 @@ impl<T> LFShardedRingBuf<T> {
     /// Checks each shard in LFShardedRingBuf to see if it's empty.
     /// Note that this ring buffer does not apply a global/full lock on shards
     /// as shards are each checked for emptiness.
-    /// An enquerer task can enqueue an item while this check is occurring.
+    /// An enqueuer task can enqueue an item while this check is occurring.
     /// It's recommended to use this only after all enqueuing operations have
     /// occurred.
     ///
@@ -427,7 +427,7 @@ impl<T> LFShardedRingBuf<T> {
     /// Checks each shard in LFShardedRingBuf to see if it's full.
     /// Note that this ring buffer does not apply a global/full lock on shards
     /// as shards are each checked for fullness.
-    /// A dequerer task can dequeue an item while this check is occurring.
+    /// A dequeuer task can dequeue an item while this check is occurring.
     /// It's recommended to use this while dequeuing operations are not
     /// occurring.
     ///

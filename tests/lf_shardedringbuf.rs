@@ -14,7 +14,7 @@ async fn test_counter() {
     let mut deq_threads = Vec::with_capacity(MAX_TASKS.try_into().unwrap());
     let mut enq_threads = Vec::new();
 
-    // Spawn MAX_TASKS dequerer *tasks*
+    // Spawn MAX_TASKS dequeuer *tasks*
     for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
         let handler = spawn_buffer_task(
@@ -39,7 +39,7 @@ async fn test_counter() {
         deq_threads.push(handler);
     }
 
-    // Just spawn a single enquerer task
+    // Just spawn a single enqueuer task
     {
         let rb = Arc::clone(&rb);
         let enq_handler = spawn_buffer_task(
@@ -60,7 +60,7 @@ async fn test_counter() {
         enq.await.unwrap();
     }
 
-    // guarantees that the dequerer finish remaining jobs in the buffer
+    // guarantees that the dequeuer finish remaining jobs in the buffer
     // before exiting
     rb.poison().await;
 

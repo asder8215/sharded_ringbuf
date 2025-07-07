@@ -83,7 +83,7 @@ If dequeue tasks are performing in a loop and enqueue task(s) is performing with
     let mut deq_threads = Vec::with_capacity(MAX_TASKS.try_into().unwrap());
     let mut enq_threads = Vec::new();
 
-    // Spawn MAX_TASKS dequerer *tasks*
+    // Spawn MAX_TASKS dequeuers *tasks*
     for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
         let handler = spawn_buffer_task(
@@ -107,7 +107,7 @@ If dequeue tasks are performing in a loop and enqueue task(s) is performing with
         deq_threads.push(handler);
     }
 
-    // Just spawn a single enquerer task
+    // Just spawn a single enqueuers task
     {
         let rb = Arc::clone(&rb);
         let enq_handler = spawn_buffer_task(
@@ -137,14 +137,14 @@ If dequeue tasks are performing in a loop and enqueue task(s) is performing with
         items_taken += curr_thread.await.unwrap();
     }
 ```
-If enquerer tasks need be in a loop, you can use the `async_stream` crate and hook up enquerer tasks to a stream, where you can denote that a `None` value returned by the stream means that it terminated.
+If enqueuers tasks need be in a loop, you can use the `async_stream` crate and hook up enqueuers tasks to a stream, where you can denote that a `None` value returned by the stream means that it terminated.
 
 # Benchmark Results
 I tried benchmarking this ring buffer (and comparing it with kanal async) with the following parameters:
 * 4 tasks for enqueuing and 4 tasks for dequeuing (each iterating through 250,000 usize)
 * 8 worker threads
 * Total capacity of the buffer is 1024 entries
-* Varying shards value I experimented on starting (8, 16, 32, 64, 128) using a ShiftBy policies with enquerer tasks operating on shard index 0-3 initially respectively, dequerer tasks operating on shard index 0-3 respectively with a shift of 4.
+* Varying shards value I experimented on starting (8, 16, 32, 64, 128) using a ShiftBy policies with enqueuers tasks operating on shard index 0-3 initially respectively, dequeuers tasks operating on shard index 0-3 respectively with a shift of 4.
 
 The following are timing results using `cargo bench` with varying shards in the order mentioned above (with barrier synchronization respectively):
 
@@ -156,7 +156,7 @@ The following are timing results using `cargo bench` with varying shards in the 
 
 ![MPMC usize Benchmark Results without Barrier](readme_imgs/mpmc_usize_without_barrier.png) -->
 
-Typical best performance for this buffer seems to come from matching the number of shards with the maximum number of enquerer/dequerer tasks spawned and then using ShiftBy policy ensuring that each enquerer tasks and dequerer tasks are at a unique initial index with respect to each other enquerer/dequerer task with the ideal shift for each enquerer/dequerer task being the number of enquerer/dequerer tasks spawned respectively (i.e. if you spawned 5 dequerer tasks, you want each task to have an initial shard index of 0, ..., 4 with a shift 5 and if you spawned 10 enquerer tasks, you want each task to have an intial shard index of 0, ..., 9 with a shift of 10).
+Typical best performance for this buffer seems to come from matching the number of shards with the maximum number of enqueuers/dequeuers tasks spawned and then using ShiftBy policy ensuring that each enqueuers tasks and dequeuers tasks are at a unique initial index with respect to each other enqueuers/dequeuers task with the ideal shift for each enqueuers/dequeuers task being the number of enqueuers/dequeuers tasks spawned respectively (i.e. if you spawned 5 dequeuers tasks, you want each task to have an initial shard index of 0, ..., 4 with a shift 5 and if you spawned 10 enqueuers tasks, you want each task to have an intial shard index of 0, ..., 9 with a shift of 10).
 
 # Future Additions/Thoughts
 * Enqueuing/Dequeuing items in batches to take advantage of Auto-Vectorization compiler optimizations
