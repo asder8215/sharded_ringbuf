@@ -137,8 +137,10 @@ impl<T> LFShardedRingBuf<T> {
          * Tasks start off with a random shard_ind or
          * user provided initial shard ind value % self.shards
          * before going around a circle
+         * 
+         * The following statement below is DEPRECATED:
          * If it's a poison task, then it will go try to find
-         * a shard to just enqueue a None item in there
+         * a shard to just enqueue a None item in there 
          */
         let mut current = match acquire {
             Acquire::Poison => 0,
@@ -168,6 +170,15 @@ impl<T> LFShardedRingBuf<T> {
             }
 
             if self.acquire_shard(current) {
+                /* 
+                 * Note here we don't check if the shard is full or empty first
+                 * That's because these shard checks are done in an eventual memory
+                 * consistent state, which means for safety, we need to acquire the
+                 * shard first. Otherwise we may be acquiring a shard that was
+                 * incorrectly seen as non empty or non full (or vice versa).
+                 * and that could lead to addition/subtraction overflow on
+                 * enqueue_ind, dequeue_ind, and job_count in InnerRingBuffer<T>
+                 */
                 if match acquire {
                     Acquire::Enqueue => !self.is_shard_full(current),
                     Acquire::Dequeue => !self.is_shard_empty(current),
@@ -181,7 +192,16 @@ impl<T> LFShardedRingBuf<T> {
                     }
                     break;
                 } else {
-                    self.release_shard(current);
+                    /* 
+                     * Because a successful thread-task pair who can enqueue/dequeue
+                     * will eventually release the shard_lock using Release
+                     * memory ordering, all other threads who come here and
+                     * acquire the shard only to realize that the shard is full
+                     * as an enqueuer or empty as a dequeuer, can just drop this lock
+                     * immediately in a memory safe ordering manner.
+                     */
+                        self.shard_locks[current]
+                            .store(false, Ordering::Relaxed);
                 }
             }
 
@@ -350,21 +370,15 @@ impl<T> LFShardedRingBuf<T> {
 
     /// Clears the LFShardedRingBuf back to an empty state.
     ///
-    /// To clear the RingBuffer *only* when it is *poisoned*, see [Self::clear_poison].
+    /// Note: This is a sync function and should be used in a sync
+    /// manner. Do not use this in an async task.
     ///
     /// Time Complexity: O(s * c_s * s_t) where s is the num of shards,
     /// c_s is the capacity per shard, and s_t is how long it takes to
     /// acquire shard(s)
     ///
     /// Space complexity: O(1)
-    pub async fn clear(&self) {
-        // acquire shards
-        for i in 0..self.shard_locks.len() {
-            while !self.acquire_shard(i) {
-                yield_now().await;
-            }
-        }
-
+    pub fn clear(&self) {
         // reset each shard's inner ring buffer
         for shard in 0..self.shards {
             for i in 0..self.max_capacity_per_shard {
@@ -375,11 +389,6 @@ impl<T> LFShardedRingBuf<T> {
             self.inner_rb[shard].enqueue_index.set(0);
             self.inner_rb[shard].dequeue_index.set(0);
             self.inner_rb[shard].job_count.store(0, Ordering::Release);
-        }
-
-        // release shards
-        for i in 0..self.shard_locks.len() {
-            self.release_shard(i);
         }
     }
 
