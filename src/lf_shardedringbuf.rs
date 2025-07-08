@@ -22,12 +22,11 @@ enum Acquire {
 
 /// A sharded ring (circular) buffer struct that can only be used in a *multi-threaded environment*,
 /// using a [BoxedSlice] of CachePadded<InnerRingBuffers> under the hood.
-/// See the [Wikipedia article](https://en.wikipedia.org/wiki/Circular_buffer) for more info.
 #[derive(Debug)]
 pub struct LFShardedRingBuf<T> {
     shards: usize,
     max_capacity_per_shard: usize,
-    // Used to determine which shard a thread should work on
+    // Used to determine which shard a thread-task pair should work on
     // CachePadded to prevent false sharing
     shard_jobs: Box<[CachePadded<ShardJob>]>,
     // Multiple InnerRingBuffer structure based on num of shards
