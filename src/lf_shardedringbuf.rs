@@ -7,7 +7,7 @@ use fastrand::usize as frand;
 use std::{
     cell::{Cell, UnsafeCell},
     fmt::Debug,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use tokio::task::yield_now;
 
@@ -28,17 +28,11 @@ pub struct LFShardedRingBuf<T> {
     max_capacity_per_shard: usize,
     // Used to determine which shard a thread-task pair should work on
     // CachePadded to prevent false sharing
-    shard_jobs: Box<[CachePadded<ShardJob>]>,
+    shard_locks: Box<[CachePadded<AtomicBool>]>,
     // Multiple InnerRingBuffer structure based on num of shards
     // CachePadded to prevent false sharing
     inner_rb: Box<[CachePadded<InnerRingBuffer<T>>]>,
     poisoned: Cell<bool>,
-}
-
-#[derive(Debug)]
-struct ShardJob {
-    occupied: AtomicBool,   // occupied status of shard
-    job_count: Cell<usize>, // how many jobs are in shard
 }
 
 // An inner ring buffer to contain the items, enqueue, and dequeue index for LFShardedRingBuf struct
@@ -47,15 +41,7 @@ struct InnerRingBuffer<T> {
     items: Box<[UnsafeCell<Option<T>>]>,
     enqueue_index: Cell<usize>,
     dequeue_index: Cell<usize>,
-}
-
-impl ShardJob {
-    fn new() -> Self {
-        ShardJob {
-            occupied: AtomicBool::new(false),
-            job_count: Cell::new(0),
-        }
-    }
+    job_count: AtomicUsize,
 }
 
 /// Implements the InnerRingBuffer functions
@@ -73,6 +59,7 @@ impl<T> InnerRingBuffer<T> {
             },
             enqueue_index: Cell::new(0),
             dequeue_index: Cell::new(0),
+            job_count: AtomicUsize::new(0),
         }
     }
 }
@@ -96,10 +83,10 @@ impl<T> LFShardedRingBuf<T> {
             // capacity: (capacity as f64 / shards as f64).ceil() as usize * shards,
             shards,
             max_capacity_per_shard: (capacity + shards - 1) / shards,
-            shard_jobs: {
+            shard_locks: {
                 let mut vec = Vec::with_capacity(shards);
                 for _i in 0..shards {
-                    vec.push(CachePadded::new(ShardJob::new()));
+                    vec.push(CachePadded::new(AtomicBool::new(false)));
                 }
                 vec.into_boxed_slice()
             },
@@ -119,8 +106,7 @@ impl<T> LFShardedRingBuf<T> {
     /// Acquire the specific shard
     #[inline(always)]
     fn acquire_shard(&self, shard_ind: usize) -> bool {
-        self.shard_jobs[shard_ind]
-            .occupied
+        self.shard_locks[shard_ind]
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
     }
@@ -128,13 +114,12 @@ impl<T> LFShardedRingBuf<T> {
     /// Release the specific shard
     #[inline(always)]
     fn release_shard(&self, shard_ind: usize) {
-        self.shard_jobs[shard_ind]
-            .occupied
+        self.shard_locks[shard_ind]
             .store(false, Ordering::Release);
     }
 
     /// Helper function for a task to acquire a specific shard within
-    /// self.shard_jobs for enqueuing or dequeuing purposes. Shard acquisition
+    /// self.shard_locks for enqueuing or dequeuing purposes. Shard acquisition
     /// is done based on the policy placed inside SHARD_POLICY
     ///
     /// Time Complexity: O(s_t) where s_t comes from the consideration below:
@@ -228,11 +213,13 @@ impl<T> LFShardedRingBuf<T> {
     /// Release the occupation status of this shard atomically
     #[inline(always)]
     fn release_and_increment_shard(&self, shard_ind: usize) {
-        self.shard_jobs[shard_ind]
+        // doing this relaxed loading, release storing is faster
+        // than fetch_add + it's guaranteed that there's one writer
+        // modifying this shard's job_count
+        self.inner_rb[shard_ind]
             .job_count
-            .set(self.shard_jobs[shard_ind].job_count.get() + 1);
-        self.shard_jobs[shard_ind]
-            .occupied
+            .store(self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) + 1, Ordering::Release);
+        self.shard_locks[shard_ind]
             .store(false, Ordering::Release);
     }
 
@@ -290,11 +277,13 @@ impl<T> LFShardedRingBuf<T> {
     /// Release the occupation status of this shard atomically
     #[inline(always)]
     fn release_and_decrement_shard(&self, shard_ind: usize) {
-        self.shard_jobs[shard_ind]
+        // doing this relaxed loading, release storing is faster
+        // than fetch_sub + it's guaranteed that there's one writer
+        // modifying this shard's job_count
+        self.inner_rb[shard_ind]
             .job_count
-            .set(self.shard_jobs[shard_ind].job_count.get() - 1);
-        self.shard_jobs[shard_ind]
-            .occupied
+            .store(self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) - 1, Ordering::Release);
+        self.shard_locks[shard_ind]
             .store(false, Ordering::Release);
     }
 
@@ -318,9 +307,6 @@ impl<T> LFShardedRingBuf<T> {
     ///
     /// Space Complexity: O(1)
     pub async fn dequeue(&self) -> Option<T> {
-        if self.poisoned.get() && self.is_empty() {
-            return None;
-        }
         let current = self.try_acquire_shard(Acquire::Dequeue).await;
         if self.poisoned.get() && self.is_empty() {
             return None;
@@ -330,6 +316,7 @@ impl<T> LFShardedRingBuf<T> {
         item
     }
 
+    #[deprecated = "Use the poison() method instead to terminate dequeuers"]
     /// Poisons the RingBuffer such that you can use this to denote when dequeuers tasks
     /// are done with working. Use this ONLY if you are fine with early termination of
     /// dequeuer tasks because it's possible for valid jobs to exist in the ring buffer
@@ -372,7 +359,7 @@ impl<T> LFShardedRingBuf<T> {
     /// Space complexity: O(1)
     pub async fn clear(&self) {
         // acquire shards
-        for i in 0..self.shard_jobs.len() {
+        for i in 0..self.shard_locks.len() {
             while !self.acquire_shard(i) {
                 yield_now().await;
             }
@@ -387,19 +374,19 @@ impl<T> LFShardedRingBuf<T> {
             }
             self.inner_rb[shard].enqueue_index.set(0);
             self.inner_rb[shard].dequeue_index.set(0);
-            self.shard_jobs[shard].job_count.set(0);
+            self.inner_rb[shard].job_count.store(0, Ordering::Release);
         }
 
         // release shards
-        for i in 0..self.shard_jobs.len() {
+        for i in 0..self.shard_locks.len() {
             self.release_shard(i);
         }
     }
 
     /// Checks each shard in LFShardedRingBuf to see if it's empty.
-    /// Note that this ring buffer does not apply a global/full lock on shards
-    /// as shards are each checked for emptiness.
-    /// An enqueuer task can enqueue an item while this check is occurring.
+    /// Note that this ring buffer checks emptiness in an eventually
+    /// consistent manner and does not acquire the shard, so it's possible
+    /// that an enqueuer task can enqueue an item while this check is occurring.
     /// It's recommended to use this only after all enqueuing operations have
     /// occurred.
     ///
@@ -408,7 +395,7 @@ impl<T> LFShardedRingBuf<T> {
     /// Space Complexity: O(1)
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
-        for i in 0..self.shard_jobs.len() {
+        for i in 0..self.shard_locks.len() {
             if !self.is_shard_empty(i) {
                 return false;
             }
@@ -419,23 +406,23 @@ impl<T> LFShardedRingBuf<T> {
 
     /// Checks to see if a specific shard is empty
     #[inline(always)]
-    pub fn is_shard_empty(&self, shard_ind: usize) -> bool {
-        self.shard_jobs[shard_ind].job_count.get() == 0
+    fn is_shard_empty(&self, shard_ind: usize) -> bool {
+        self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) == 0
     }
 
     /// Checks each shard in LFShardedRingBuf to see if it's full.
-    /// Note that this ring buffer does not apply a global/full lock on shards
-    /// as shards are each checked for fullness.
-    /// A dequeuer task can dequeue an item while this check is occurring.
+    /// Note that this ring buffer checks fullness in an eventually
+    /// consistent manner and does not acquire the shard, so it's possible
+    /// that a dequeuer task can dequeue an item while this check is occurring.
     /// It's recommended to use this while dequeuing operations are not
-    /// occurring.
+    /// occurring or have all completed.
     ///
     /// Time Complexity: O(s) where s is the number of shards
     ///
     /// Space Complexity: O(1)
     #[inline(always)]
     pub fn is_full(&self) -> bool {
-        for i in 0..self.shard_jobs.len() {
+        for i in 0..self.shard_locks.len() {
             if !self.is_shard_full(i) {
                 return false;
             }
@@ -448,7 +435,7 @@ impl<T> LFShardedRingBuf<T> {
     /// Checks to see if a specific shard is full
     #[inline(always)]
     pub fn is_shard_full(&self, shard_ind: usize) -> bool {
-        self.shard_jobs[shard_ind].job_count.get() == self.max_capacity_per_shard
+        self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) == self.max_capacity_per_shard
     }
 
     /// Checks the next enqueue index within the LFShardedRingBuf
@@ -600,7 +587,7 @@ impl<T> LFShardedRingBuf<T> {
         T: Clone,
     {
         // acquire shards
-        for i in 0..self.shard_jobs.len() {
+        for i in 0..self.shard_locks.len() {
             while !self.acquire_shard(i) {
                 yield_now().await;
             }
@@ -622,7 +609,7 @@ impl<T> LFShardedRingBuf<T> {
         }
 
         // release shard
-        for i in 0..self.shard_jobs.len() {
+        for i in 0..self.shard_locks.len() {
             self.release_shard(i);
         }
 
@@ -641,7 +628,7 @@ impl<T> LFShardedRingBuf<T> {
         T: Debug,
     {
         // sping to acquire shard
-        for i in 0..self.shard_jobs.len() {
+        for i in 0..self.shard_locks.len() {
             while !self.acquire_shard(i) {
                 yield_now().await;
             }

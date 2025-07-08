@@ -70,7 +70,8 @@ async fn benchmark_lock_free_sharded_buffer(capacity: usize, shards: usize) {
         // let barrier = Arc::clone(&barrier);
         let handler: tokio::task::JoinHandle<()> = spawn_buffer_task(
             ShardPolicy::ShiftBy {
-                initial_index: Some(i),
+                // initial_index: Some(i),
+                initial_index: None,
                 shift: MAX_TASKS,
             },
             async move {
@@ -89,7 +90,8 @@ async fn benchmark_lock_free_sharded_buffer(capacity: usize, shards: usize) {
         // let barrier = Arc::clone(&barrier);
         let handler: tokio::task::JoinHandle<usize> = spawn_buffer_task(
             ShardPolicy::ShiftBy {
-                initial_index: Some(i),
+                // initial_index: Some(i),
+                initial_index: None,
                 shift: MAX_TASKS,
             },
             async move {
