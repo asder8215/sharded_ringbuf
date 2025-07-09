@@ -413,7 +413,7 @@ impl<T> LFShardedRingBuf<T> {
 
     /// Checks to see if a specific shard is empty
     #[inline(always)]
-    fn is_shard_empty(&self, shard_ind: usize) -> bool {
+    pub fn is_shard_empty(&self, shard_ind: usize) -> bool {
         self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) == 0
     }
 
