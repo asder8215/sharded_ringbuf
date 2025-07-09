@@ -9,7 +9,7 @@ async fn test_spsc_tasks() {
     const MAX_SHARDS: usize = 10;
     let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
-    assert_eq!(rb.is_empty(), true);
+    assert!(rb.is_empty());
 
     let mut deq_threads = Vec::new();
     let mut enq_threads = Vec::new();
@@ -65,7 +65,7 @@ async fn test_spsc_tasks() {
         items_taken += curr_thread.await.unwrap();
     }
 
-    assert_eq!(rb.is_empty(), true);
+    assert!(rb.is_empty());
 
     assert_eq!(2 * MAX_ITEMS, items_taken);
 }
@@ -77,7 +77,7 @@ async fn test_spmc_tasks() {
     const MAX_TASKS: usize = 5;
     let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
-    assert_eq!(rb.is_empty(), true);
+    assert!(rb.is_empty());
 
     let mut deq_threads = Vec::new();
     let mut enq_threads = Vec::new();
@@ -136,7 +136,7 @@ async fn test_spmc_tasks() {
         items_taken += curr_thread.await.unwrap();
     }
 
-    assert_eq!(rb.is_empty(), true);
+    assert!(rb.is_empty());
 
     assert_eq!(2 * MAX_ITEMS, items_taken);
 }
@@ -148,7 +148,7 @@ async fn test_mpsc_tasks() {
     const MAX_TASKS: usize = 5;
     let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
-    assert_eq!(rb.is_empty(), true);
+    assert!(rb.is_empty());
 
     let mut deq_threads = Vec::new();
     let mut enq_threads = Vec::new();
@@ -207,7 +207,7 @@ async fn test_mpsc_tasks() {
         items_taken += curr_thread.await.unwrap();
     }
 
-    assert_eq!(rb.is_empty(), true);
+    assert!(rb.is_empty());
 
     assert_eq!(2 * MAX_ITEMS * MAX_TASKS, items_taken);
 }
@@ -219,7 +219,7 @@ async fn test_mpmc_tasks() {
     const MAX_TASKS: usize = 5;
     let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
-    assert_eq!(rb.is_empty(), true);
+    assert!(rb.is_empty());
 
     let mut deq_threads = Vec::new();
     let mut enq_threads = Vec::new();
@@ -279,7 +279,7 @@ async fn test_mpmc_tasks() {
         items_taken += curr_thread.await.unwrap();
     }
 
-    assert_eq!(rb.is_empty(), true);
+    assert!(rb.is_empty());
 
     assert_eq!(2 * MAX_ITEMS * MAX_TASKS, items_taken);
 }
@@ -291,7 +291,7 @@ async fn test_random_and_sweep() {
     const MAX_TASKS: usize = 5;
     let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
-    assert_eq!(rb.is_empty(), true);
+    assert!(rb.is_empty());
 
     let mut deq_threads = Vec::new();
     let mut enq_threads = Vec::new();
@@ -339,7 +339,7 @@ async fn test_random_and_sweep() {
         items_taken += curr_thread.await.unwrap();
     }
 
-    assert_eq!(rb.is_empty(), true);
+    assert!(rb.is_empty());
 
     assert_eq!(2 * MAX_ITEMS * MAX_TASKS, items_taken);
 }
@@ -351,7 +351,7 @@ async fn test_full_clear_empty() {
     const MAX_TASKS: usize = 5;
     let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
-    assert_eq!(rb.is_empty(), true);
+    assert!(rb.is_empty());
 
     let mut enq_threads = Vec::new();
 
@@ -371,9 +371,9 @@ async fn test_full_clear_empty() {
         enq.await.unwrap();
     }
 
-    assert_eq!(rb.is_full(), true);
+    assert!(rb.is_full());
 
     rb.clear();
 
-    assert_eq!(rb.is_empty(), true);
+    assert!(rb.is_empty());
 }
