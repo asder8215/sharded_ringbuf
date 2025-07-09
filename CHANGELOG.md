@@ -1,5 +1,11 @@
 # Change Log for lf-shardedringbuf:
 
+## In v1.1.0:
+* Removed `LFShardedRingBuf::poison_deq` method. Use `LFShardedRingBuf::poison` method instead (see examples from `README.md`).
+* Improved performance of `LFShardedRingBuf<T>` through using `MaybeUninit<T>` (instead of `Option<T>`) for each `InnerRingBuffer<T>` items
+    * As a result, `Drop` trait has been implemented for `InnerRingBuffer<T>`
+* Updated cargo benchmarking details in `README.md` and added in `benchmark_res` folder to store old benchmark data.
+
 ## In v0.1.12:
 * Added Apache licensing in repository
 * Added `CHANGELOG.md` (will update this frequently from now on)
