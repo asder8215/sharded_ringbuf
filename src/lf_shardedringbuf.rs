@@ -82,7 +82,7 @@ impl<T> LFShardedRingBuf<T> {
             // currently don't need this line
             // capacity: (capacity as f64 / shards as f64).ceil() as usize * shards,
             shards,
-            max_capacity_per_shard: (capacity + shards - 1) / shards,
+            max_capacity_per_shard: capacity.div_ceil(shards),
             shard_locks: {
                 let mut vec = Vec::with_capacity(shards);
                 for _i in 0..shards {
@@ -94,7 +94,7 @@ impl<T> LFShardedRingBuf<T> {
                 let mut vec = Vec::with_capacity(shards);
                 for _i in 0..shards {
                     vec.push(CachePadded::new(InnerRingBuffer::new(
-                        (capacity + shards - 1) / shards,
+                        capacity.div_ceil(shards),
                     )));
                 }
                 vec.into_boxed_slice()
@@ -114,8 +114,7 @@ impl<T> LFShardedRingBuf<T> {
     /// Release the specific shard
     #[inline(always)]
     fn release_shard(&self, shard_ind: usize) {
-        self.shard_locks[shard_ind]
-            .store(false, Ordering::Release);
+        self.shard_locks[shard_ind].store(false, Ordering::Release);
     }
 
     /// Helper function for a task to acquire a specific shard within
@@ -137,10 +136,10 @@ impl<T> LFShardedRingBuf<T> {
          * Tasks start off with a random shard_ind or
          * user provided initial shard ind value % self.shards
          * before going around a circle
-         * 
+         *
          * The following statement below is DEPRECATED:
          * If it's a poison task, then it will go try to find
-         * a shard to just enqueue a None item in there 
+         * a shard to just enqueue a None item in there
          */
         let mut current = match acquire {
             Acquire::Poison => 0,
@@ -170,7 +169,7 @@ impl<T> LFShardedRingBuf<T> {
             }
 
             if self.acquire_shard(current) {
-                /* 
+                /*
                  * Note here we don't check if the shard is full or empty first
                  * That's because these shard checks are done in an eventual memory
                  * consistent state, which means for safety, we need to acquire the
@@ -192,7 +191,7 @@ impl<T> LFShardedRingBuf<T> {
                     }
                     break;
                 } else {
-                    /* 
+                    /*
                      * Because a successful thread-task pair who can enqueue/dequeue
                      * will eventually release the shard_lock using Release
                      * memory ordering, all other threads who come here and
@@ -200,8 +199,7 @@ impl<T> LFShardedRingBuf<T> {
                      * as an enqueuer or empty as a dequeuer, can just drop this lock
                      * immediately in a memory safe ordering manner.
                      */
-                        self.shard_locks[current]
-                            .store(false, Ordering::Relaxed);
+                    self.shard_locks[current].store(false, Ordering::Relaxed);
                 }
             }
 
@@ -236,11 +234,11 @@ impl<T> LFShardedRingBuf<T> {
         // doing this relaxed loading, release storing is faster
         // than fetch_add + it's guaranteed that there's one writer
         // modifying this shard's job_count
-        self.inner_rb[shard_ind]
-            .job_count
-            .store(self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) + 1, Ordering::Release);
-        self.shard_locks[shard_ind]
-            .store(false, Ordering::Release);
+        self.inner_rb[shard_ind].job_count.store(
+            self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) + 1,
+            Ordering::Release,
+        );
+        self.shard_locks[shard_ind].store(false, Ordering::Release);
     }
 
     /// Grab inner ring buffer shard, enqueue the item, update the enqueue index
@@ -300,11 +298,11 @@ impl<T> LFShardedRingBuf<T> {
         // doing this relaxed loading, release storing is faster
         // than fetch_sub + it's guaranteed that there's one writer
         // modifying this shard's job_count
-        self.inner_rb[shard_ind]
-            .job_count
-            .store(self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) - 1, Ordering::Release);
-        self.shard_locks[shard_ind]
-            .store(false, Ordering::Release);
+        self.inner_rb[shard_ind].job_count.store(
+            self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) - 1,
+            Ordering::Release,
+        );
+        self.shard_locks[shard_ind].store(false, Ordering::Release);
     }
 
     /// Grab the inner ring buffer shard, dequeue the item, update the dequeue index

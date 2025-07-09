@@ -299,36 +299,30 @@ async fn test_random_and_sweep() {
     // Spawn MAX_TASKS dequeuer tasks
     for _ in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
-        let handler = spawn_buffer_task(
-            ShardPolicy::RandomAndSweep,
-            async move {
-                let rb = rb.clone();
-                let mut counter: usize = 0;
-                loop {
-                    let item = rb.dequeue().await;
-                    match item {
-                        Some(_) => counter += 1,
-                        None => break,
-                    }
+        let handler = spawn_buffer_task(ShardPolicy::RandomAndSweep, async move {
+            let rb = rb.clone();
+            let mut counter: usize = 0;
+            loop {
+                let item = rb.dequeue().await;
+                match item {
+                    Some(_) => counter += 1,
+                    None => break,
                 }
-                counter
-            },
-        );
+            }
+            counter
+        });
         deq_threads.push(handler);
     }
 
     // Spawn MAX_TASKS enqueuer tasks
     for _ in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
-        let enq_handler = spawn_buffer_task(
-            ShardPolicy::RandomAndSweep,
-            async move {
-                let rb = rb.clone();
-                for _i in 0..2 * MAX_ITEMS {
-                    rb.enqueue(20).await;
-                }
-            },
-        );
+        let enq_handler = spawn_buffer_task(ShardPolicy::RandomAndSweep, async move {
+            let rb = rb.clone();
+            for _i in 0..2 * MAX_ITEMS {
+                rb.enqueue(20).await;
+            }
+        });
         enq_threads.push(enq_handler);
     }
 
@@ -351,7 +345,7 @@ async fn test_random_and_sweep() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn test_full_clear_empty(){
+async fn test_full_clear_empty() {
     const MAX_ITEMS: usize = 100;
     const MAX_SHARDS: usize = 10;
     const MAX_TASKS: usize = 5;
@@ -364,15 +358,12 @@ async fn test_full_clear_empty(){
     // Spawn MAX_TASKS enqueuer tasks
     for _ in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
-        let enq_handler = spawn_buffer_task(
-            ShardPolicy::RandomAndSweep,
-            async move {
-                let rb = rb.clone();
-                for _ in 0..(MAX_ITEMS/MAX_TASKS) {
-                    rb.enqueue(20).await;
-                }
-            },
-        );
+        let enq_handler = spawn_buffer_task(ShardPolicy::RandomAndSweep, async move {
+            let rb = rb.clone();
+            for _ in 0..(MAX_ITEMS / MAX_TASKS) {
+                rb.enqueue(20).await;
+            }
+        });
         enq_threads.push(enq_handler);
     }
 

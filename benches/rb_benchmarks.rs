@@ -6,8 +6,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{task};
 use tokio::sync::Barrier as AsyncBarrier;
+use tokio::task;
 
 // comparing the benchmarking to
 // https://github.com/fereidani/rust-channel-benchmarks/tree/main?tab=readme-ov-file
