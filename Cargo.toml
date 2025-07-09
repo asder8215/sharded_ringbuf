@@ -1,6 +1,6 @@
 [package]
 name = "lf-shardedringbuf"
-version = "0.1.11"
+version = "0.1.12"
 edition = "2024"
 rust-version="1.87.0"
 description = """

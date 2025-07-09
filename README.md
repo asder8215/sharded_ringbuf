@@ -231,7 +231,7 @@ Assume we have X enqueuer tasks, Y dequeuer tasks.
 * Currently, this buffer makes each shard have the same capacity to promote an evenly distributed load of enqueue and dequeue operation among the shards, but in the future, I may allow for uneven shards, a way to decrease or increase the number of shards this buffer uses, and a way to increase (though unsure about decreasing) the capacity of the buffer. 
 
 # Contribution
-All contributions (i.e. documentation, testing, providing feedback) are welcome! Just make sure to `cargo clippy` and `cargo fmt` before you create a pull request. And if it's a major change or concern, make a GitHub Issue first before creating a pull request.
+All contributions (i.e. documentation, testing, providing feedback) are welcome! Check out [CONTRIBUTING.md](CONTRIBUTING.md) on how to start.
 
 # License
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](LICENSE-MIT) and [Apache License](LICENSE-APACHE).
