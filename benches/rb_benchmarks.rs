@@ -13,7 +13,7 @@ use tokio::task;
 // https://github.com/fereidani/rust-channel-benchmarks/tree/main?tab=readme-ov-file
 const MAX_SHARDS: [usize; 7] = [4, 8, 16, 32, 64, 128, 256];
 const MAX_TASKS: usize = 4;
-const MAX_THREADS: usize = MAX_TASKS * 2;
+const MAX_THREADS: usize = MAX_TASKS;
 const CAPACITY: usize = 1024;
 const ITEM_PER_TASK: usize = 250000;
 
@@ -536,373 +536,374 @@ fn benchmark_multithreaded(c: &mut Criterion) {
     );
 }
 
-fn benchmark_single_threaded(c: &mut Criterion) {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .worker_threads(1)
-        .build()
-        .unwrap();
+// fn benchmark_single_threaded(c: &mut Criterion) {
+//     let runtime = tokio::runtime::Builder::new_multi_thread()
+//         .enable_all()
+//         .worker_threads(1)
+//         .build()
+//         .unwrap();
 
-    c.bench_with_input(
-        BenchmarkId::new("kanal_async", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_kanal_async(s).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("kanal_async", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_kanal_async(s).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("1shard_buffer", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb(s, 1).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("1shard_buffer", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_lfsrb(s, 1).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("4shard_buffer", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb(s, MAX_SHARDS[0]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("4shard_buffer", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_lfsrb(s, MAX_SHARDS[0]).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("8shard_buffer", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb(s, MAX_SHARDS[1]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("8shard_buffer", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_lfsrb(s, MAX_SHARDS[1]).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("16shard_buffer", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb(s, MAX_SHARDS[2]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("16shard_buffer", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_lfsrb(s, MAX_SHARDS[2]).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("32shard_buffer", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb(s, MAX_SHARDS[3]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("32shard_buffer", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_lfsrb(s, MAX_SHARDS[3]).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("64shard_buffer", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb(s, MAX_SHARDS[4]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("64shard_buffer", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_lfsrb(s, MAX_SHARDS[4]).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("128shard_buffer", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb(s, MAX_SHARDS[5]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("128shard_buffer", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_lfsrb(s, MAX_SHARDS[5]).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("256shard_buffer", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb(s, MAX_SHARDS[6]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("256shard_buffer", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_lfsrb(s, MAX_SHARDS[6]).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("kanal_async_barrier", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_kanal_async_barrier(s).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("kanal_async_barrier", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_kanal_async_barrier(s).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("1shard_buffer_barrier", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_barrier(s, 1).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("1shard_buffer_barrier", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_lfsrb_barrier(s, 1).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("4shard_buffer_barrier", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_barrier(s, MAX_SHARDS[0]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("4shard_buffer_barrier", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_lfsrb_barrier(s, MAX_SHARDS[0]).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("8shard_buffer_barrier", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_barrier(s, MAX_SHARDS[1]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("8shard_buffer_barrier", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_lfsrb_barrier(s, MAX_SHARDS[1]).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("16shard_buffer_barrier", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_barrier(s, MAX_SHARDS[2]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("16shard_buffer_barrier", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_lfsrb_barrier(s, MAX_SHARDS[2]).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("32shard_buffer_barrier", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_barrier(s, MAX_SHARDS[3]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("32shard_buffer_barrier", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_lfsrb_barrier(s, MAX_SHARDS[3]).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("64shard_buffer_barrier", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_barrier(s, MAX_SHARDS[4]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("64shard_buffer_barrier", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_lfsrb_barrier(s, MAX_SHARDS[4]).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("128shard_buffer_barrier", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_barrier(s, MAX_SHARDS[5]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("128shard_buffer_barrier", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_lfsrb_barrier(s, MAX_SHARDS[5]).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
+//                 total
+//             });
+//         },
+//     );
 
-    c.bench_with_input(
-        BenchmarkId::new("256shard_buffer_barrier", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_barrier(s, MAX_SHARDS[6]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+//     c.bench_with_input(
+//         BenchmarkId::new("256shard_buffer_barrier", CAPACITY),
+//         &CAPACITY,
+//         |b, &s| {
+//             // Insert a call to `to_async` to convert the bencher to async mode.
+//             // The timing loops are the same as with the normal bencher.
+//             b.to_async(&runtime).iter_custom(|iters| async move {
+//                 let mut total = Duration::ZERO;
+//                 for _i in 0..iters {
+//                     let start = Instant::now();
+//                     benchmark_lfsrb_barrier(s, MAX_SHARDS[6]).await;
+//                     let end = Instant::now();
+//                     total += end - start;
+//                 }
 
-                total
-            });
-        },
-    );
-}
+//                 total
+//             });
+//         },
+//     );
+// }
 
-criterion_group!(benches, benchmark_multithreaded, benchmark_single_threaded);
+// criterion_group!(benches, benchmark_multithreaded, benchmark_single_threaded);
+criterion_group!(benches, benchmark_multithreaded);
 criterion_main!(benches);

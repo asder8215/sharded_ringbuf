@@ -144,67 +144,58 @@ If enqueuer tasks need be in a loop, you can use the `async_stream` crate and ho
 # Benchmark Results
 I tried benchmarking this ring buffer (and comparing it with kanal async) with the following parameters:
 * 4 tasks for enqueuing and 4 tasks for dequeuing (each adding/removing 250,000 usize)
-* 8 worker threads
+* 4 worker threads
 * Total capacity of the buffer is 1024 entries
-* Varying shards value I experimented on starting (4, 8, 16, 32, 64, 128, 256) using a ShiftBy policies using random initial shard indices for enqueuer and dequeuer tasks and shift of 4.
+* Varying shards value I experimented on starting (4, 8, 16, 32, 64, 128, 256) using a ShiftBy policies using random initial indices for enqueuer and dequeuer tasks and shift of 4.
+
+Note I am running this on:
+Machine: AMD Ryzen 7 5800X 3.8 GHz 8-Core Processor
+Rust:rustc rustc 1.87.0 (17067e9ac 2025-05-09)
+OS: Windows 10
+Date: July 9, 2025
+
+The cargo benchmarking in GitHub Action may not reflect the full possibility of this buffer due to limited number of threads and small cache size. To check out previous cargo benchmarking results, you can look at `benchmark_res`.
 
 The following are timing results using `cargo bench` with varying shards in the order mentioned above:
 
 Without barrier synchronization:
 
 ```
-kanal_async/1024        time:   [20.690 ms 21.061 ms 21.439 ms]
-                        change: [+12.212% +14.716% +17.107%] (p = 0.00 < 0.05)
+kanal_async/1024        time:   [22.317 ms 22.632 ms 22.942 ms]
 
-4shard_buffer/1024      time:   [13.938 ms 14.109 ms 14.283 ms]
-                        change: [+23.241% +24.800% +26.346%] (p = 0.00 < 0.05)
+4shard_buffer/1024      time:   [12.290 ms 12.400 ms 12.521 ms]
 
-8shard_buffer/1024      time:   [18.105 ms 18.299 ms 18.491 ms]
-                        change: [+19.169% +22.492% +25.801%] (p = 0.00 < 0.05)
+8shard_buffer/1024      time:   [13.791 ms 13.877 ms 13.986 ms]
 
-16shard_buffer/1024     time:   [17.490 ms 17.594 ms 17.696 ms]
-                        change: [−9.0458% −8.4163% −7.8831%] (p = 0.00 < 0.05)
+16shard_buffer/1024     time:   [18.080 ms 18.155 ms 18.257 ms]
 
-32shard_buffer/1024     time:   [20.207 ms 20.316 ms 20.436 ms]
-                        change: [−14.603% −14.031% −13.416%] (p = 0.00 < 0.05)
+32shard_buffer/1024     time:   [22.461 ms 22.525 ms 22.590 ms]
 
-64shard_buffer/1024     time:   [29.082 ms 29.536 ms 29.994 ms]
-                        change: [−9.8435% −8.0829% −6.4858%] (p = 0.00 < 0.05)
+64shard_buffer/1024     time:   [29.521 ms 29.956 ms 30.430 ms]
 
-128shard_buffer/1024    time:   [24.379 ms 24.948 ms 25.514 ms]
-                        change: [−11.931% −9.6158% −7.2861%] (p = 0.00 < 0.05)
+128shard_buffer/1024    time:   [27.255 ms 27.587 ms 27.937 ms]
 
-256shard_buffer/1024    time:   [20.393 ms 20.788 ms 21.185 ms]
-                        change: [−5.8023% −3.2172% −0.3579%] (p = 0.03 < 0.05)
+256shard_buffer/1024    time:   [22.369 ms 22.729 ms 23.097 ms]
 ```
 
 With barrier synchronization on all tasks:
 ```
-kanal_async/1024        time:   [22.418 ms 22.815 ms 23.216 ms]
-                        change: [+5.6374% +8.3242% +11.093%] (p = 0.00 < 0.05)
+kanal_async/1024        time:   [23.817 ms 24.061 ms 24.310 ms]
 
-4shard_buffer/1024      time:   [13.572 ms 13.726 ms 13.881 ms]
-                        change: [−4.2682% −2.7131% −1.1723%] (p = 0.00 < 0.05)
+4shard_buffer/1024      time:   [12.199 ms 12.230 ms 12.265 ms]
 
-8shard_buffer/1024      time:   [18.018 ms 18.339 ms 18.687 ms]
-                        change: [−1.8632% +0.2186% +2.3834%] (p = 0.84 > 0.05)
+8shard_buffer/1024      time:   [13.809 ms 13.859 ms 13.917 ms]
 
-16shard_buffer/1024     time:   [17.159 ms 17.265 ms 17.371 ms]
-                        change: [−2.7330% −1.8720% −0.9990%] (p = 0.00 < 0.05)
+16shard_buffer/1024     time:   [18.151 ms 18.209 ms 18.278 ms]
 
-32shard_buffer/1024     time:   [19.535 ms 19.595 ms 19.654 ms]
-                        change: [−4.1731% −3.5472% −2.9584%] (p = 0.00 < 0.05)
+32shard_buffer/1024     time:   [22.610 ms 22.703 ms 22.796 ms]
 
-64shard_buffer/1024     time:   [28.766 ms 29.240 ms 29.726 ms]
-                        change: [−3.2440% −1.0032% +1.2517%] (p = 0.38 > 0.05)
+64shard_buffer/1024     time:   [29.074 ms 29.461 ms 29.882 ms]
 
-128shard_buffer/1024    time:   [23.947 ms 24.480 ms 25.017 ms]
-                        change: [−4.9885% −1.8747% +1.1849%] (p = 0.24 > 0.05)
+128shard_buffer/1024    time:   [23.266 ms 23.581 ms 23.904 ms]
 
-256shard_buffer/1024    time:   [20.025 ms 20.464 ms 20.912 ms]
-                        change: [−4.4560% −1.5594% +1.2597%] (p = 0.29 > 0.05)
+256shard_buffer/1024    time:   [22.258 ms 22.615 ms 22.970 ms]
 ```
-
 
 # Some Considerations When Using This Buffer
 
