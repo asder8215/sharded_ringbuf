@@ -665,7 +665,7 @@ impl<T> LFShardedRingBuf<T> {
                     || i < enqueue_ind && enqueue_ind > dequeue_ind
                 {
                     let val_ref = unsafe { (*inner_shard.items[i].get()).assume_init_ref() };
-                    print!("{:?}, ", val_ref);
+                    print!("{val_ref:?}, ");
                 } else {
                     print!("None, ");
                 }
