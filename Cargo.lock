@@ -274,7 +274,7 @@ dependencies = [
 
 [[package]]
 name = "lf-shardedringbuf"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "criterion",
  "crossbeam-utils",

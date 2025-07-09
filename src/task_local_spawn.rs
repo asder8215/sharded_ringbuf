@@ -5,6 +5,10 @@ use crate::{
 use std::cell::Cell;
 use tokio::task::{JoinHandle, spawn};
 
+/// Spawns a Tokio task for the purpose of using it with LFShardedRingBuf
+/// 
+/// This function *must* be used in order to enqueue or dequeue items onto
+/// LFShardedRingBuf
 pub fn spawn_buffer_task<F, T>(policy: ShardPolicy, fut: F) -> JoinHandle<T>
 where
     F: std::future::Future<Output = T> + Send + 'static,
