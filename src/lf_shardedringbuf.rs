@@ -20,8 +20,7 @@ enum Acquire {
     Poison,
 }
 
-/// A sharded ring (circular) buffer struct that can only be used in a *multi-threaded environment*,
-/// using a `[Box<[CachePadded<InnerRingBuffer<T>>]>]` under the hood.
+/// A sharded ring (circular) buffer struct that can only be used in an *async environment*.
 #[derive(Debug)]
 pub struct LFShardedRingBuf<T> {
     shards: usize,
