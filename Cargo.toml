@@ -13,7 +13,7 @@ categories = ["concurrency"]
 readme = "README.md"
 repository = "https://github.com/asder8215/lf-shardedringbuf"
 homepage = "https://github.com/asder8215/lf-shardedringbuf"
-documentation = ""
+documentation = "https://docs.rs/lf-shardedringbuf/latest/lf_shardedringbuf/"
 
 [dependencies]
 crossbeam-utils = "^0.8.21"
