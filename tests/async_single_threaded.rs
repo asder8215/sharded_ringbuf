@@ -12,10 +12,10 @@ async fn test_spsc_tasks() {
     // Init rb check
     assert!(rb.is_empty());
     for i in 0..MAX_SHARDS {
-        if let Some(val) = rb.get_deq_ind_for_shard(i) {
+        if let Some(val) = rb.get_deq_ind_at_shard(i) {
             assert_eq!(val, 0)
         }
-        if let Some(val) = rb.get_enq_ind_for_shard(i) {
+        if let Some(val) = rb.get_enq_ind_at_shard(i) {
             assert_eq!(val, 0)
         }
     }
@@ -89,10 +89,10 @@ async fn test_spmc_tasks() {
     // Init rb check
     assert!(rb.is_empty());
     for i in 0..MAX_SHARDS {
-        if let Some(val) = rb.get_deq_ind_for_shard(i) {
+        if let Some(val) = rb.get_deq_ind_at_shard(i) {
             assert_eq!(val, 0)
         }
-        if let Some(val) = rb.get_enq_ind_for_shard(i) {
+        if let Some(val) = rb.get_enq_ind_at_shard(i) {
             assert_eq!(val, 0)
         }
     }
@@ -169,10 +169,10 @@ async fn test_mpsc_tasks() {
     // Init rb check
     assert!(rb.is_empty());
     for i in 0..MAX_SHARDS {
-        if let Some(val) = rb.get_deq_ind_for_shard(i) {
+        if let Some(val) = rb.get_deq_ind_at_shard(i) {
             assert_eq!(val, 0)
         }
-        if let Some(val) = rb.get_enq_ind_for_shard(i) {
+        if let Some(val) = rb.get_enq_ind_at_shard(i) {
             assert_eq!(val, 0)
         }
     }
@@ -249,10 +249,10 @@ async fn test_mpmc_tasks() {
     // Init rb check
     assert!(rb.is_empty());
     for i in 0..MAX_SHARDS {
-        if let Some(val) = rb.get_deq_ind_for_shard(i) {
+        if let Some(val) = rb.get_deq_ind_at_shard(i) {
             assert_eq!(val, 0)
         }
-        if let Some(val) = rb.get_enq_ind_for_shard(i) {
+        if let Some(val) = rb.get_enq_ind_at_shard(i) {
             assert_eq!(val, 0)
         }
     }
@@ -330,10 +330,10 @@ async fn test_random_and_sweep() {
     // Init rb check
     assert!(rb.is_empty());
     for i in 0..MAX_SHARDS {
-        if let Some(val) = rb.get_deq_ind_for_shard(i) {
+        if let Some(val) = rb.get_deq_ind_at_shard(i) {
             assert_eq!(val, 0)
         }
-        if let Some(val) = rb.get_enq_ind_for_shard(i) {
+        if let Some(val) = rb.get_enq_ind_at_shard(i) {
             assert_eq!(val, 0)
         }
     }
@@ -399,10 +399,10 @@ async fn test_full_clear_empty() {
     // Init rb check
     assert!(rb.is_empty());
     for i in 0..MAX_SHARDS {
-        if let Some(val) = rb.get_deq_ind_for_shard(i) {
+        if let Some(val) = rb.get_deq_ind_at_shard(i) {
             assert_eq!(val, 0)
         }
-        if let Some(val) = rb.get_enq_ind_for_shard(i) {
+        if let Some(val) = rb.get_enq_ind_at_shard(i) {
             assert_eq!(val, 0)
         }
     }
@@ -432,10 +432,10 @@ async fn test_full_clear_empty() {
     // index 0
     // Init rb check
     for i in 0..MAX_SHARDS {
-        if let Some(val) = rb.get_deq_ind_for_shard(i) {
+        if let Some(val) = rb.get_deq_ind_at_shard(i) {
             assert_eq!(val, 0)
         }
-        if let Some(val) = rb.get_enq_ind_for_shard(i) {
+        if let Some(val) = rb.get_enq_ind_at_shard(i) {
             assert_eq!(val, 0)
         }
     }
