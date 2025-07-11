@@ -12,13 +12,11 @@ async fn test_spsc_tasks() {
     // Init rb check
     assert!(rb.is_empty());
     for i in 0..MAX_SHARDS {
-        match rb.get_deq_ind_for_shard(i) {
-            Some(val) => assert_eq!(val, 0),
-            None => {}
+        if let Some(val) = rb.get_deq_ind_for_shard(i) {
+            assert_eq!(val, 0)
         }
-        match rb.get_enq_ind_for_shard(i) {
-            Some(val) => assert_eq!(val, 0),
-            None => {}
+        if let Some(val) = rb.get_enq_ind_for_shard(i) {
+            assert_eq!(val, 0)
         }
     }
 
@@ -91,13 +89,11 @@ async fn test_spmc_tasks() {
     // Init rb check
     assert!(rb.is_empty());
     for i in 0..MAX_SHARDS {
-        match rb.get_deq_ind_for_shard(i) {
-            Some(val) => assert_eq!(val, 0),
-            None => {}
+        if let Some(val) = rb.get_deq_ind_for_shard(i) {
+            assert_eq!(val, 0)
         }
-        match rb.get_enq_ind_for_shard(i) {
-            Some(val) => assert_eq!(val, 0),
-            None => {}
+        if let Some(val) = rb.get_enq_ind_for_shard(i) {
+            assert_eq!(val, 0)
         }
     }
 
@@ -173,13 +169,11 @@ async fn test_mpsc_tasks() {
     // Init rb check
     assert!(rb.is_empty());
     for i in 0..MAX_SHARDS {
-        match rb.get_deq_ind_for_shard(i) {
-            Some(val) => assert_eq!(val, 0),
-            None => {}
+        if let Some(val) = rb.get_deq_ind_for_shard(i) {
+            assert_eq!(val, 0)
         }
-        match rb.get_enq_ind_for_shard(i) {
-            Some(val) => assert_eq!(val, 0),
-            None => {}
+        if let Some(val) = rb.get_enq_ind_for_shard(i) {
+            assert_eq!(val, 0)
         }
     }
 
@@ -255,13 +249,11 @@ async fn test_mpmc_tasks() {
     // Init rb check
     assert!(rb.is_empty());
     for i in 0..MAX_SHARDS {
-        match rb.get_deq_ind_for_shard(i) {
-            Some(val) => assert_eq!(val, 0),
-            None => {}
+        if let Some(val) = rb.get_deq_ind_for_shard(i) {
+            assert_eq!(val, 0)
         }
-        match rb.get_enq_ind_for_shard(i) {
-            Some(val) => assert_eq!(val, 0),
-            None => {}
+        if let Some(val) = rb.get_enq_ind_for_shard(i) {
+            assert_eq!(val, 0)
         }
     }
 
@@ -338,13 +330,11 @@ async fn test_random_and_sweep() {
     // Init rb check
     assert!(rb.is_empty());
     for i in 0..MAX_SHARDS {
-        match rb.get_deq_ind_for_shard(i) {
-            Some(val) => assert_eq!(val, 0),
-            None => {}
+        if let Some(val) = rb.get_deq_ind_for_shard(i) {
+            assert_eq!(val, 0)
         }
-        match rb.get_enq_ind_for_shard(i) {
-            Some(val) => assert_eq!(val, 0),
-            None => {}
+        if let Some(val) = rb.get_enq_ind_for_shard(i) {
+            assert_eq!(val, 0)
         }
     }
 
@@ -409,13 +399,11 @@ async fn test_full_clear_empty() {
     // Init rb check
     assert!(rb.is_empty());
     for i in 0..MAX_SHARDS {
-        match rb.get_deq_ind_for_shard(i) {
-            Some(val) => assert_eq!(val, 0),
-            None => {}
+        if let Some(val) = rb.get_deq_ind_for_shard(i) {
+            assert_eq!(val, 0)
         }
-        match rb.get_enq_ind_for_shard(i) {
-            Some(val) => assert_eq!(val, 0),
-            None => {}
+        if let Some(val) = rb.get_enq_ind_for_shard(i) {
+            assert_eq!(val, 0)
         }
     }
 
@@ -442,14 +430,13 @@ async fn test_full_clear_empty() {
     // No dequeuing has been done, so should be at 0 still
     // With a full buffer it means that all shard are back at
     // index 0
+    // Init rb check
     for i in 0..MAX_SHARDS {
-        match rb.get_deq_ind_for_shard(i) {
-            Some(val) => assert_eq!(val, 0),
-            None => {}
+        if let Some(val) = rb.get_deq_ind_for_shard(i) {
+            assert_eq!(val, 0)
         }
-        match rb.get_enq_ind_for_shard(i) {
-            Some(val) => assert_eq!(val, 0),
-            None => {}
+        if let Some(val) = rb.get_enq_ind_for_shard(i) {
+            assert_eq!(val, 0)
         }
     }
 

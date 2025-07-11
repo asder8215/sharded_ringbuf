@@ -5,7 +5,7 @@ use crate::{
 use crossbeam_utils::CachePadded;
 use fastrand::usize as frand;
 use std::{
-    cell::{UnsafeCell},
+    cell::UnsafeCell,
     fmt::Debug,
     mem::MaybeUninit,
     ptr,
@@ -96,7 +96,9 @@ impl<T> LFShardedRingBuf<T> {
                     if remainder == 0 {
                         vec.push(CachePadded::new(InnerRingBuffer::new(capacity_per_shard)));
                     } else {
-                        vec.push(CachePadded::new(InnerRingBuffer::new(capacity_per_shard + 1)));
+                        vec.push(CachePadded::new(InnerRingBuffer::new(
+                            capacity_per_shard + 1,
+                        )));
                         remainder -= 1;
                     }
                 }
