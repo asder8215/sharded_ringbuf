@@ -2,15 +2,13 @@
 An async, lock-free, sharded, cache-aware SPSC/MPSC/MPMC ring buffer in Rust.
 
 # Features
-* It uses multiple smaller simple ring buffers (shards) each with capacity = requested capacity / # of shards. This value is ceiled up currently so all shard have the same capacity.
-* It is lock-free; only uses atomic primitives and no mutexes or rwlocks
+* It uses multiple smaller simple ring buffers (shards) each with capacity = requested capacity / # of shards. Note if the requested capacity is not divisible by the number of shards, then the last shard will have an uneven load compared to the rest.
+* It is lock-free; only uses atomic primitives and no mutexes or rwlocks.
 * False sharing is avoided through cache padding the shard atomic locks + shards.
 * It uses tokio's task local variables as a shard index reference and to remember the shard acquistion policy strategy to take for tasks to effectively acquire a shard to enqueue/dequeue on.
-* ~~Exponential backoff + random jitter (capped at 20 ms) used to yield CPU in functions that loops.~~
-    * This backoff method was removed since it introduced a bit more delay. This is because what you want to yield here are not the threads but rather the asynchronous tasks; you want the threads to always be working and let tokio reassign these threads to a task that will actually perform work. Instead of sleeping the threads, if a thread performs a full sweep around the shards (a sweep defined in respect to the shard acquisition policies), tokio's `yield_now()` function will put the running task to the back of the scheduled list. Doing this in a way also enables that task to actually perform work as an enqueuer or dequeuer later on because presumably a successful dequeue or enqueue operation has occurred by then.
-    * Also, unfortunately, `tokio::time::sleep()` function works on a millisecond granularity, so sleeping on a task could be a bit more costly.
 * Different shard acquisition policies are provided: `Sweep`, `RandomAndSweep`, and `ShiftBy` (see `src/shard_policies.rs` for more info) 
-* It can perform in an async multithreaded or async single threaded environment (optimal for multiple producer, multiple consumer situations)
+* Task backoffs/yielding are done based on shard acquisition policies; this is to encourage threads to always be performing on work with different tasks (plus, `tokio::time::sleep()` works on a millisecond granularity, which is unoptimal for this buffer)
+* It can perform in an async multithreaded or async single threaded environment (optimal for multiple producer task, multiple consumer task situation)
 
 # Example Usage
 The following are examples of how to use LFShardedRingBuf:
@@ -132,7 +130,7 @@ If dequeuer tasks are performing in a loop and enqueuer task is performing with 
 
     // Poison for dequeuer tasks to exit gracefully, completing any remaining jobs
     // on the buffer 
-    rb.poison().await;
+    rb.poison();
 
     // Wait for dequeuers
     for deq in deq_threads {
@@ -161,40 +159,40 @@ The following are timing results using `cargo bench` with varying shards in the 
 Without barrier synchronization:
 
 ```
-kanal_async/1024        time:   [22.317 ms 22.632 ms 22.942 ms]
+kanal_async/1024        time:   [17.980 ms 18.192 ms 18.404 ms]
 
-4shard_buffer/1024      time:   [12.290 ms 12.400 ms 12.521 ms]
+4shard_buffer/1024      time:   [11.935 ms 11.970 ms 12.014 ms]
 
-8shard_buffer/1024      time:   [13.791 ms 13.877 ms 13.986 ms]
+8shard_buffer/1024      time:   [13.449 ms 13.479 ms 13.517 ms]
 
-16shard_buffer/1024     time:   [18.080 ms 18.155 ms 18.257 ms]
+16shard_buffer/1024     time:   [17.725 ms 17.771 ms 17.824 ms]
 
-32shard_buffer/1024     time:   [22.461 ms 22.525 ms 22.590 ms]
+32shard_buffer/1024     time:   [22.640 ms 22.768 ms 22.914 ms]
 
-64shard_buffer/1024     time:   [29.521 ms 29.956 ms 30.430 ms]
+64shard_buffer/1024     time:   [27.089 ms 27.396 ms 27.719 ms]
 
-128shard_buffer/1024    time:   [27.255 ms 27.587 ms 27.937 ms]
+128shard_buffer/1024    time:   [25.890 ms 26.242 ms 26.611 ms]
 
-256shard_buffer/1024    time:   [22.369 ms 22.729 ms 23.097 ms]
+256shard_buffer/1024    time:   [21.637 ms 22.008 ms 22.387 ms]
 ```
 
 With barrier synchronization on all tasks:
 ```
-kanal_async/1024        time:   [23.817 ms 24.061 ms 24.310 ms]
+kanal_async/1024        time:   [18.556 ms 18.757 ms 18.960 ms]
 
-4shard_buffer/1024      time:   [12.199 ms 12.230 ms 12.265 ms]
+4shard_buffer/1024      time:   [11.811 ms 11.832 ms 11.858 ms]
 
-8shard_buffer/1024      time:   [13.809 ms 13.859 ms 13.917 ms]
+8shard_buffer/1024      time:   [13.589 ms 13.641 ms 13.702 ms]
 
-16shard_buffer/1024     time:   [18.151 ms 18.209 ms 18.278 ms]
+16shard_buffer/1024     time:   [18.343 ms 18.572 ms 18.819 ms]
 
-32shard_buffer/1024     time:   [22.610 ms 22.703 ms 22.796 ms]
+32shard_buffer/1024     time:   [23.209 ms 23.405 ms 23.616 ms]
 
-64shard_buffer/1024     time:   [29.074 ms 29.461 ms 29.882 ms]
+64shard_buffer/1024     time:   [28.632 ms 29.100 ms 29.583 ms]
 
-128shard_buffer/1024    time:   [23.266 ms 23.581 ms 23.904 ms]
+128shard_buffer/1024    time:   [26.119 ms 26.464 ms 26.816 ms]
 
-256shard_buffer/1024    time:   [22.258 ms 22.615 ms 22.970 ms]
+256shard_buffer/1024    time:   [20.831 ms 21.199 ms 21.569 ms]
 ```
 
 # Some Considerations When Using This Buffer
@@ -216,10 +214,14 @@ Assume we have X enqueuer tasks, Y dequeuer tasks.
         * If you know how many enqueuer/dequeuer tasks you are spawning, use a ShiftBy policy with a shift of X for enqueuers assigning the initial shard index for each of these task manually from 0 - (X - 1) and a shift of Y for dequeuers assigning the initial shard index for each of these task manually from 0 - (Y - 1). 
         * If you don't know how many tasks you are spawning, then use a ShiftBy policy with a random initial shard index (pass in "None") and base the shift value by the number of shards you are using for enqueuer/dequeuer tasks.
 
+Now let's assume the following (which is more likely in a real world Tokio project): 1000+ enqueuer tasks, 1000+ dequeuer tasks
+* Use as many threads as you can
+* Use as many shards as you can with a higher capacity per shard. You want to minimize contention between what shards a task uses as much as possible.
+* It's probably best to go for a ShiftBy acquisition policy (until a better acquisition policy is made) that matches the number of shards used.
+
 # Future Additions/Thoughts
 * Enqueuing/Dequeuing items in batches to take advantage of Auto-Vectorization compiler optimizations
 * Play around with shard acquiring policies, so there are fewer failing calls to `self.shard_jobs[current].occupied.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok()`. For example, introduce a `SweepBy` and `SweepAndShiftBy` policies so that the task is yielded through less attempts of acquiring a shard.
-* Currently, this buffer makes each shard have the same capacity to promote an evenly distributed load of enqueue and dequeue operation among the shards, but in the future, I may allow for uneven shards, a way to decrease or increase the number of shards this buffer uses, and a way to increase (though unsure about decreasing) the capacity of the buffer. 
 
 # Contribution
 All contributions (i.e. documentation, testing, providing feedback) are welcome! Check out [CONTRIBUTING.md](CONTRIBUTING.md) on how to start.

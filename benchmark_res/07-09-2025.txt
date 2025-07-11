@@ -1,0 +1,54 @@
+I tried benchmarking this ring buffer (and comparing it with kanal async) with the following parameters:
+* 4 tasks for enqueuing and 4 tasks for dequeuing (each adding/removing 250,000 usize)
+* 4 worker threads
+* Total capacity of the buffer is 1024 entries
+* Varying shards value I experimented on starting (4, 8, 16, 32, 64, 128, 256) using a ShiftBy policies using random initial indices for enqueuer and dequeuer tasks and shift of 4.
+
+Note I am running this on:
+Machine: AMD Ryzen 7 5800X 3.8 GHz 8-Core Processor
+Rust:rustc rustc 1.87.0 (17067e9ac 2025-05-09)
+OS: Windows 10
+Date: July 9, 2025
+
+The cargo benchmarking in GitHub Action may not reflect the full possibility of this buffer due to limited number of threads and small cache size. To check out previous cargo benchmarking results, you can look at `benchmark_res`.
+
+The following are timing results using `cargo bench` with varying shards in the order mentioned above:
+
+Without barrier synchronization:
+
+```
+kanal_async/1024        time:   [22.317 ms 22.632 ms 22.942 ms]
+
+4shard_buffer/1024      time:   [12.290 ms 12.400 ms 12.521 ms]
+
+8shard_buffer/1024      time:   [13.791 ms 13.877 ms 13.986 ms]
+
+16shard_buffer/1024     time:   [18.080 ms 18.155 ms 18.257 ms]
+
+32shard_buffer/1024     time:   [22.461 ms 22.525 ms 22.590 ms]
+
+64shard_buffer/1024     time:   [29.521 ms 29.956 ms 30.430 ms]
+
+128shard_buffer/1024    time:   [27.255 ms 27.587 ms 27.937 ms]
+
+256shard_buffer/1024    time:   [22.369 ms 22.729 ms 23.097 ms]
+```
+
+With barrier synchronization on all tasks:
+```
+kanal_async/1024        time:   [23.817 ms 24.061 ms 24.310 ms]
+
+4shard_buffer/1024      time:   [12.199 ms 12.230 ms 12.265 ms]
+
+8shard_buffer/1024      time:   [13.809 ms 13.859 ms 13.917 ms]
+
+16shard_buffer/1024     time:   [18.151 ms 18.209 ms 18.278 ms]
+
+32shard_buffer/1024     time:   [22.610 ms 22.703 ms 22.796 ms]
+
+64shard_buffer/1024     time:   [29.074 ms 29.461 ms 29.882 ms]
+
+128shard_buffer/1024    time:   [23.266 ms 23.581 ms 23.904 ms]
+
+256shard_buffer/1024    time:   [22.258 ms 22.615 ms 22.970 ms]
+```
