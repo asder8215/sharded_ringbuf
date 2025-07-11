@@ -28,3 +28,9 @@ kanal = "^0.1.1"
 [[bench]]
 name = "rb_benchmarks"
 harness = false
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
