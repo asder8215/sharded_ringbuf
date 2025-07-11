@@ -1,10 +1,21 @@
 # Change Log for lf-shardedringbuf:
 
+## In v2.1.0:
+* Removed unnecessary metadata in `LFShardedRingBuf<T>` and changed `poisoned` field inside `LFShardedRingBuf<T>` as well as the `InnerRingBuffer<T>` `enqueue_ind`, `dequeue_ind`, and `job_count` fields from cell variants (i.e. `Cell<usize>`, `Cell<bool>`) to atomic variants (`AtomicUsize`, `AtomicBool`) for safe accesses among threads (and correctness)
+* `LFShardedRingBuf<T>` now supports uneven shards (that is if request capacity is not divisible by requested number of shards) and balances uneven capacity among each shard nicely.
+* Modified how `LFShardedRingBuf::clear` method works, which clears with Relaxed memory ordering. Added in an async clear method called `LFShardedRingBuf::concurrent_clear` should users want to clear the buffer in an asynchronous manner.
+* Changed `LFShardedRingBuf::poison` and `LFShardedRingBuf::clear_poison` to not be async functions. Didn't make sense. Also, added `LFShardedRingBuf::is_poisoned` to test if the buffer
+is poisoned.
+* Added in `LFShardedRingBuf::get_num_of_shards`, `LFShardedRingBuf::get_shard_capacity`, `LFShardedRingBuf::get_total_capacity`, `LFShardedRingBuf::get_job_count_at_shard`, so users are exposed to reading what the `LFShardedRingBuf<T>` contains. Done so with Relaxed memory ordering.
+* Added in `rt_spawn_buffer_task` method in case users want to provide a specific Tokio Runtime to spawn a task rather than work with `[tokio::main]` macro.
+* Renamed `LFShardedRingBuf::next_enqueue_index_for_shard` and `LFShardedRingBuf::next_dequeue_index_for_shard` to `LFShardedRingBuf::get_enq_ind_for_shard` and `LFShardedRingBuf::get_deq_ind_for_shard` respectively for better naming conventions.
+* README updated with more tips on how to use this buffer and new benchmarking is shown.
+
 ## In v1.1.0:
 * Removed `LFShardedRingBuf::poison_deq` method. Use `LFShardedRingBuf::poison` method instead (see examples from `README.md`).
 * Improved performance of `LFShardedRingBuf<T>` through using `MaybeUninit<T>` (instead of `Option<T>`) for each `InnerRingBuffer<T>` items
     * As a result, `Drop` trait has been implemented for `InnerRingBuffer<T>`
-* Updated cargo benchmarking details in `README.md` and added in `benchmark_res` folder to store old benchmark data.
+* Updated cargo benchmarking details in `README.md` and added in `benchmark_res/` folder to store old benchmark data.
 
 ## In v0.1.12:
 * Added Apache licensing in repository
