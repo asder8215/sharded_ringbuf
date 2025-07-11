@@ -58,7 +58,7 @@ async fn test_spsc_tasks() {
         enq.await.unwrap();
     }
 
-    rb.poison().await;
+    rb.poison();
 
     let mut items_taken: usize = 0;
     while let Some(curr_thread) = deq_threads.pop() {
@@ -129,7 +129,7 @@ async fn test_spmc_tasks() {
 
     // guarantees that the dequeuer finish remaining jobs in the buffer
     // before exiting
-    rb.poison().await;
+    rb.poison();
 
     let mut items_taken: usize = 0;
     while let Some(curr_thread) = deq_threads.pop() {
@@ -200,7 +200,7 @@ async fn test_mpsc_tasks() {
 
     // guarantees that the dequeuer finish remaining jobs in the buffer
     // before exiting
-    rb.poison().await;
+    rb.poison();
 
     let mut items_taken: usize = 0;
     while let Some(curr_thread) = deq_threads.pop() {
@@ -272,7 +272,7 @@ async fn test_mpmc_tasks() {
 
     // guarantees that the dequeuer finish remaining jobs in the buffer
     // before exiting
-    rb.poison().await;
+    rb.poison();
 
     let mut items_taken: usize = 0;
     while let Some(curr_thread) = deq_threads.pop() {
@@ -332,7 +332,7 @@ async fn test_random_and_sweep() {
 
     // guarantees that the dequeuer finish remaining jobs in the buffer
     // before exiting
-    rb.poison().await;
+    rb.poison();
 
     let mut items_taken: usize = 0;
     while let Some(curr_thread) = deq_threads.pop() {

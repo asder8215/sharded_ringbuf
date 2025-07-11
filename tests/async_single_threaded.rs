@@ -9,7 +9,18 @@ async fn test_spsc_tasks() {
     const MAX_SHARDS: usize = 10;
     let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
+    // Init rb check
     assert!(rb.is_empty());
+    for i in 0..MAX_SHARDS {
+        match rb.get_deq_ind_for_shard(i) {
+            Some(val) => assert_eq!(val, 0),
+            None => {}
+        }
+        match rb.get_enq_ind_for_shard(i) {
+            Some(val) => assert_eq!(val, 0),
+            None => {}
+        }
+    }
 
     let mut deq_threads = Vec::new();
     let mut enq_threads = Vec::new();
@@ -58,7 +69,7 @@ async fn test_spsc_tasks() {
         enq.await.unwrap();
     }
 
-    rb.poison().await;
+    rb.poison();
 
     let mut items_taken: usize = 0;
     while let Some(curr_thread) = deq_threads.pop() {
@@ -77,7 +88,18 @@ async fn test_spmc_tasks() {
     const MAX_TASKS: usize = 5;
     let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
+    // Init rb check
     assert!(rb.is_empty());
+    for i in 0..MAX_SHARDS {
+        match rb.get_deq_ind_for_shard(i) {
+            Some(val) => assert_eq!(val, 0),
+            None => {}
+        }
+        match rb.get_enq_ind_for_shard(i) {
+            Some(val) => assert_eq!(val, 0),
+            None => {}
+        }
+    }
 
     let mut deq_threads = Vec::new();
     let mut enq_threads = Vec::new();
@@ -129,7 +151,7 @@ async fn test_spmc_tasks() {
 
     // guarantees that the dequeuer finish remaining jobs in the buffer
     // before exiting
-    rb.poison().await;
+    rb.poison();
 
     let mut items_taken: usize = 0;
     while let Some(curr_thread) = deq_threads.pop() {
@@ -148,7 +170,18 @@ async fn test_mpsc_tasks() {
     const MAX_TASKS: usize = 5;
     let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
+    // Init rb check
     assert!(rb.is_empty());
+    for i in 0..MAX_SHARDS {
+        match rb.get_deq_ind_for_shard(i) {
+            Some(val) => assert_eq!(val, 0),
+            None => {}
+        }
+        match rb.get_enq_ind_for_shard(i) {
+            Some(val) => assert_eq!(val, 0),
+            None => {}
+        }
+    }
 
     let mut deq_threads = Vec::new();
     let mut enq_threads = Vec::new();
@@ -200,7 +233,7 @@ async fn test_mpsc_tasks() {
 
     // guarantees that the dequeuer finish remaining jobs in the buffer
     // before exiting
-    rb.poison().await;
+    rb.poison();
 
     let mut items_taken: usize = 0;
     while let Some(curr_thread) = deq_threads.pop() {
@@ -219,7 +252,18 @@ async fn test_mpmc_tasks() {
     const MAX_TASKS: usize = 5;
     let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
+    // Init rb check
     assert!(rb.is_empty());
+    for i in 0..MAX_SHARDS {
+        match rb.get_deq_ind_for_shard(i) {
+            Some(val) => assert_eq!(val, 0),
+            None => {}
+        }
+        match rb.get_enq_ind_for_shard(i) {
+            Some(val) => assert_eq!(val, 0),
+            None => {}
+        }
+    }
 
     let mut deq_threads = Vec::new();
     let mut enq_threads = Vec::new();
@@ -272,7 +316,7 @@ async fn test_mpmc_tasks() {
 
     // guarantees that the dequeuer finish remaining jobs in the buffer
     // before exiting
-    rb.poison().await;
+    rb.poison();
 
     let mut items_taken: usize = 0;
     while let Some(curr_thread) = deq_threads.pop() {
@@ -291,7 +335,18 @@ async fn test_random_and_sweep() {
     const MAX_TASKS: usize = 5;
     let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
+    // Init rb check
     assert!(rb.is_empty());
+    for i in 0..MAX_SHARDS {
+        match rb.get_deq_ind_for_shard(i) {
+            Some(val) => assert_eq!(val, 0),
+            None => {}
+        }
+        match rb.get_enq_ind_for_shard(i) {
+            Some(val) => assert_eq!(val, 0),
+            None => {}
+        }
+    }
 
     let mut deq_threads = Vec::new();
     let mut enq_threads = Vec::new();
@@ -332,7 +387,7 @@ async fn test_random_and_sweep() {
 
     // guarantees that the dequeuer finish remaining jobs in the buffer
     // before exiting
-    rb.poison().await;
+    rb.poison();
 
     let mut items_taken: usize = 0;
     while let Some(curr_thread) = deq_threads.pop() {
@@ -351,7 +406,18 @@ async fn test_full_clear_empty() {
     const MAX_TASKS: usize = 5;
     let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
+    // Init rb check
     assert!(rb.is_empty());
+    for i in 0..MAX_SHARDS {
+        match rb.get_deq_ind_for_shard(i) {
+            Some(val) => assert_eq!(val, 0),
+            None => {}
+        }
+        match rb.get_enq_ind_for_shard(i) {
+            Some(val) => assert_eq!(val, 0),
+            None => {}
+        }
+    }
 
     let mut enq_threads = Vec::new();
 
@@ -372,6 +438,20 @@ async fn test_full_clear_empty() {
     }
 
     assert!(rb.is_full());
+
+    // No dequeuing has been done, so should be at 0 still
+    // With a full buffer it means that all shard are back at
+    // index 0
+    for i in 0..MAX_SHARDS {
+        match rb.get_deq_ind_for_shard(i) {
+            Some(val) => assert_eq!(val, 0),
+            None => {}
+        }
+        match rb.get_enq_ind_for_shard(i) {
+            Some(val) => assert_eq!(val, 0),
+            None => {}
+        }
+    }
 
     rb.clear();
 
