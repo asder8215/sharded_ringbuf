@@ -5,7 +5,7 @@ use crate::{
 use crossbeam_utils::CachePadded;
 use fastrand::usize as frand;
 use std::{
-    cell::{Cell, UnsafeCell},
+    cell::{UnsafeCell},
     fmt::Debug,
     mem::MaybeUninit,
     ptr,
@@ -24,23 +24,21 @@ enum Acquire {
 /// A sharded ring (circular) buffer struct that can only be used in an *async environment*.
 #[derive(Debug)]
 pub struct LFShardedRingBuf<T> {
-    shards: usize,
-    max_capacity_per_shard: usize,
     // Used to determine which shard a thread-task pair should work on
     // CachePadded to prevent false sharing
     shard_locks: Box<[CachePadded<AtomicBool>]>,
     // Multiple InnerRingBuffer structure based on num of shards
     // CachePadded to prevent false sharing
     inner_rb: Box<[CachePadded<InnerRingBuffer<T>>]>,
-    poisoned: Cell<bool>,
+    poisoned: AtomicBool,
 }
 
 // An inner ring buffer to contain the items, enqueue, and dequeue index for LFShardedRingBuf struct
 #[derive(Debug, Default)]
 struct InnerRingBuffer<T> {
     items: Box<[UnsafeCell<MaybeUninit<T>>]>,
-    enqueue_index: Cell<usize>,
-    dequeue_index: Cell<usize>,
+    enqueue_index: AtomicUsize,
+    dequeue_index: AtomicUsize,
     job_count: AtomicUsize,
 }
 
@@ -57,8 +55,8 @@ impl<T> InnerRingBuffer<T> {
                 }
                 vec.into_boxed_slice()
             },
-            enqueue_index: Cell::new(0),
-            dequeue_index: Cell::new(0),
+            enqueue_index: AtomicUsize::new(0),
+            dequeue_index: AtomicUsize::new(0),
             job_count: AtomicUsize::new(0),
         }
     }
@@ -78,11 +76,13 @@ impl<T> LFShardedRingBuf<T> {
     pub fn new(capacity: usize, shards: usize) -> Self {
         assert!(capacity > 0, "Capacity must be positive");
         assert!(shards > 0, "Shards must be positive");
+        assert!(
+            capacity >= shards,
+            "Capacity of buffer must be greater or equal to number of requested shards"
+        );
+        let capacity_per_shard = capacity / shards;
+        let mut remainder = capacity % shards;
         Self {
-            // currently don't need this line
-            // capacity: (capacity as f64 / shards as f64).ceil() as usize * shards,
-            shards,
-            max_capacity_per_shard: capacity.div_ceil(shards),
             shard_locks: {
                 let mut vec = Vec::with_capacity(shards);
                 for _i in 0..shards {
@@ -92,15 +92,55 @@ impl<T> LFShardedRingBuf<T> {
             },
             inner_rb: {
                 let mut vec = Vec::with_capacity(shards);
-                for _i in 0..shards {
-                    vec.push(CachePadded::new(InnerRingBuffer::new(
-                        capacity.div_ceil(shards),
-                    )));
+                for _ in 0..shards {
+                    if remainder == 0 {
+                        vec.push(CachePadded::new(InnerRingBuffer::new(capacity_per_shard)));
+                    } else {
+                        vec.push(CachePadded::new(InnerRingBuffer::new(capacity_per_shard + 1)));
+                        remainder -= 1;
+                    }
                 }
                 vec.into_boxed_slice()
             },
-            poisoned: Cell::new(false),
+            poisoned: AtomicBool::new(false),
         }
+    }
+
+    /// Returns the number of shards used in LFShardedRingBuf
+    ///
+    /// Time Complexity: O(1)
+    ///
+    /// Space Complexity: O(1)
+    pub fn get_num_of_shards(&self) -> usize {
+        self.shard_locks.len()
+    }
+
+    /// Returns the capacity of a specific shard in LFShardedRingBuf
+    /// or None if provided an invalid shard index
+    ///
+    /// Time Complexity: O(1)
+    ///
+    /// Space Complexity: O(1)
+    pub fn get_shard_capacity(&self, shard_ind: usize) -> Option<usize> {
+        if shard_ind >= self.shard_locks.len() {
+            debug_assert!(shard_ind >= self.shard_locks.len(), "Invalid shard index");
+            return None;
+        }
+
+        Some(self.inner_rb[shard_ind].items.len())
+    }
+
+    /// Returns the total capacity of LFShardedRingBuf
+    ///
+    /// Time Complexity: O(s) where s is the number of shards used in this buffer
+    ///
+    /// Space Complexity: O(1)
+    pub fn get_total_capacity(&self) -> usize {
+        let mut count = 0;
+        for shard in &self.inner_rb {
+            count += shard.items.len()
+        }
+        count
     }
 
     /// Acquire the specific shard
@@ -137,13 +177,14 @@ impl<T> LFShardedRingBuf<T> {
          * user provided initial shard ind value % self.shards
          * before going around a circle
          */
+        let shard_count = self.shard_locks.len();
         let mut current = match get_shard_policy() {
-            ShardPolicy::RandomAndSweep => frand(0..self.shards),
+            ShardPolicy::RandomAndSweep => frand(0..shard_count),
             _ => {
                 match get_shard_ind() {
-                    Some(val) => val % self.shards, // user provided index
+                    Some(val) => val % shard_count, // user provided index
                     None => {
-                        let val = frand(0..self.shards);
+                        let val = frand(0..shard_count);
                         set_shard_ind(val);
                         val
                     } // init rand shard for task to look at
@@ -155,7 +196,7 @@ impl<T> LFShardedRingBuf<T> {
 
         loop {
             // if poisoned and empty, get out of this loop
-            if self.poisoned.get() && self.is_empty() {
+            if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
                 break;
             }
 
@@ -176,7 +217,7 @@ impl<T> LFShardedRingBuf<T> {
                     // make sure that the shard index value is set to the
                     // next index it should look at instead of starting
                     // from its previous state
-                    set_shard_ind((current + get_shift()) % self.shards);
+                    set_shard_ind((current + get_shift()) % shard_count);
                     break;
                 } else {
                     /*
@@ -192,14 +233,14 @@ impl<T> LFShardedRingBuf<T> {
             }
 
             // Move to the next index to check if item can be placed inside
-            current = (current + get_shift()) % self.shards;
+            current = (current + get_shift()) % shard_count;
             spins += get_shift();
 
             // yield only once the enqueuers or dequeuers task has went one round through
             // the shard_job buffer
-            if spins >= self.shards {
+            if spins >= shard_count {
                 if matches!(get_shard_policy(), ShardPolicy::ShiftBy { .. }) {
-                    current = (current + 1) % self.shards;
+                    current = (current + 1) % shard_count;
                 }
                 spins = 0;
                 yield_now().await;
@@ -226,7 +267,9 @@ impl<T> LFShardedRingBuf<T> {
     #[inline(always)]
     fn enqueue_in_shard(&self, shard_ind: usize, item: T) {
         let inner = &self.inner_rb[shard_ind];
-        let enqueue_index = inner.enqueue_index.get();
+        // Ordering Relaxed can be used safely because this thread-task pair is the
+        // only modifier of this index
+        let enqueue_index = inner.enqueue_index.load(Ordering::Relaxed);
         let item_cell = inner.items[enqueue_index].get();
         // SAFETY: Only one thread will perform this operation and write to this
         // item cell
@@ -235,7 +278,7 @@ impl<T> LFShardedRingBuf<T> {
         }
         inner
             .enqueue_index
-            .set((enqueue_index + 1) % self.max_capacity_per_shard);
+            .store((enqueue_index + 1) % inner.items.len(), Ordering::Relaxed);
     }
 
     /// Helper function to add an Option item to the RingBuffer
@@ -249,7 +292,7 @@ impl<T> LFShardedRingBuf<T> {
         let current = self.try_acquire_shard(Acquire::Enqueue).await;
 
         // If poisoned, do not enqueue this item.
-        if self.poisoned.get() {
+        if self.poisoned.load(Ordering::Relaxed) {
             println!("Can't enqueue anymore. Ring buffer is poisoned.");
             return;
         }
@@ -264,7 +307,7 @@ impl<T> LFShardedRingBuf<T> {
     ///
     /// Space complexity: O(1)
     pub async fn enqueue(&self, item: T) {
-        if self.poisoned.get() {
+        if self.poisoned.load(Ordering::Relaxed) {
             println!("Can't enqueue anymore. Ring buffer is poisoned.");
             return;
         }
@@ -289,13 +332,13 @@ impl<T> LFShardedRingBuf<T> {
     #[inline(always)]
     fn dequeue_in_shard(&self, shard_ind: usize) -> T {
         let inner = &self.inner_rb[shard_ind];
-        let dequeue_index = inner.dequeue_index.get();
+        let dequeue_index = inner.dequeue_index.load(Ordering::Relaxed);
         // SAFETY: Only one thread will perform this operation
         // And it's guaranteed that an item will exist here
         let item = unsafe { (*inner.items[dequeue_index].get()).assume_init_read() };
         inner
             .dequeue_index
-            .set((dequeue_index + 1) % self.max_capacity_per_shard);
+            .store((dequeue_index + 1) % inner.items.len(), Ordering::Relaxed);
         item
     }
 
@@ -308,7 +351,7 @@ impl<T> LFShardedRingBuf<T> {
     /// Space Complexity: O(1)
     pub async fn dequeue(&self) -> Option<T> {
         let current = self.try_acquire_shard(Acquire::Dequeue).await;
-        if self.poisoned.get() && self.is_empty() {
+        if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
             return None;
         }
         let item = self.dequeue_in_shard(current);
@@ -321,20 +364,26 @@ impl<T> LFShardedRingBuf<T> {
     /// However you can use this if you want graceful exit of dequeuers tasks completing
     /// all available jobs enqueued first before exiting.
     #[inline(always)]
-    pub async fn poison(&self) {
-        self.poisoned.set(true);
+    pub fn poison(&self) {
+        self.poisoned.store(true, Ordering::Relaxed);
     }
 
     /// Clears the poison flag.
     #[inline(always)]
-    pub async fn clear_poison(&self) {
-        self.poisoned.set(false);
+    pub fn clear_poison(&self) {
+        self.poisoned.store(false, Ordering::Relaxed);
+    }
+
+    #[inline(always)]
+    pub fn is_poisoned(&self) -> bool {
+        self.poisoned.load(Ordering::Relaxed)
     }
 
     /// Clears the LFShardedRingBuf back to an empty state.
     ///
     /// Note: This is a sync function and should be used in a sync
-    /// manner. Do not use this in an async task.
+    /// manner. If you need to clear while performing concurrent
+    /// operations, use [Self::concurrent_clear]
     ///
     /// Time Complexity: O(s * c_s * s_t) where s is the num of shards,
     /// c_s is the capacity per shard, and s_t is how long it takes to
@@ -343,9 +392,9 @@ impl<T> LFShardedRingBuf<T> {
     /// Space complexity: O(1)
     pub fn clear(&self) {
         // reset each shard's inner ring buffer
-        for shard in 0..self.shards {
-            let mut drop_index = self.inner_rb[shard].dequeue_index.get();
-            let stop_index = self.inner_rb[shard].enqueue_index.get();
+        for shard in 0..self.shard_locks.len() {
+            let mut drop_index = self.inner_rb[shard].dequeue_index.load(Ordering::Relaxed);
+            let stop_index = self.inner_rb[shard].enqueue_index.load(Ordering::Relaxed);
             while drop_index != stop_index {
                 // SAFETY: This will only clear out initialized values that have not
                 // been dequeued. *Note again* this method is not thread safe.
@@ -354,8 +403,46 @@ impl<T> LFShardedRingBuf<T> {
                 }
                 drop_index = (drop_index + 1) % self.inner_rb[shard].items.len();
             }
-            self.inner_rb[shard].enqueue_index.set(0);
-            self.inner_rb[shard].dequeue_index.set(0);
+            self.inner_rb[shard]
+                .enqueue_index
+                .store(0, Ordering::Relaxed);
+            self.inner_rb[shard]
+                .dequeue_index
+                .store(0, Ordering::Relaxed);
+            self.inner_rb[shard].job_count.store(0, Ordering::Relaxed);
+        }
+    }
+
+    /// Clears the LFShardedRingBuf back to an empty state.
+    ///
+    /// Note: This is an async function and should be used in an async
+    /// manner. If you plan to clear the buffer from a single thread or after
+    /// all tasks are completed, then you should use [Self::clear()]
+    ///
+    /// Time Complexity: O(s * c_s * s_t) where s is the num of shards,
+    /// c_s is the capacity per shard, and s_t is how long it takes to
+    /// acquire shard(s)
+    ///
+    /// Space complexity: O(1)
+    pub async fn concurrent_clear(&self) {
+        // reset each shard's inner ring buffer
+        for shard in 0..self.shard_locks.len() {
+            let mut drop_index = self.inner_rb[shard].dequeue_index.load(Ordering::Acquire);
+            let stop_index = self.inner_rb[shard].enqueue_index.load(Ordering::Acquire);
+            while drop_index != stop_index {
+                // SAFETY: This will only clear out initialized values that have not
+                // been dequeued. *Note again* this method is not thread safe.
+                unsafe {
+                    ptr::drop_in_place((*self.inner_rb[shard].items[drop_index].get()).as_mut_ptr())
+                }
+                drop_index = (drop_index + 1) % self.inner_rb[shard].items.len();
+            }
+            self.inner_rb[shard]
+                .enqueue_index
+                .store(0, Ordering::Release);
+            self.inner_rb[shard]
+                .dequeue_index
+                .store(0, Ordering::Release);
             self.inner_rb[shard].job_count.store(0, Ordering::Release);
         }
     }
@@ -410,63 +497,100 @@ impl<T> LFShardedRingBuf<T> {
     }
 
     /// Checks to see if a specific shard is full
-    #[inline(always)]
-    pub fn is_shard_full(&self, shard_ind: usize) -> bool {
-        self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) == self.max_capacity_per_shard
-    }
-
-    /// Checks the next enqueue index within the LFShardedRingBuf
     ///
-    /// Time Complexity: O(s_t) where s_t is how long it takes to acquire a shard
+    /// Time Complexity: O(1)
     ///
     /// Space Complexity: O(1)
-    pub async fn next_enqueue_index_for_shard(&self, shard_ind: usize) -> Option<usize> {
-        if shard_ind >= self.shards {
-            println!("Invalid shard index");
-            return None;
-        }
+    #[inline(always)]
+    pub fn is_shard_full(&self, shard_ind: usize) -> bool {
+        self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed)
+            == self.inner_rb[shard_ind].items.len()
+    }
 
-        // spin trying to grab the shard
-        while !self.acquire_shard(shard_ind) {
-            yield_now().await;
+    /// Gets the enqueue index within a shard. Returns None if the shard
+    /// index is invalid.
+    ///
+    /// Note the enqueue index is accessed in a Relaxed memory
+    /// ordering manner.
+    ///
+    /// Time Complexity: O(1)
+    ///
+    /// Space Complexity: O(1)
+    #[inline(always)]
+    pub fn get_enq_ind_for_shard(&self, shard_ind: usize) -> Option<usize> {
+        if shard_ind >= self.shard_locks.len() {
+            return None;
         }
 
         // grab enq val
         let inner = &self.inner_rb[shard_ind];
-        let enq_ind = inner.enqueue_index.get();
-
-        // release shard
-        self.release_shard(shard_ind);
+        let enq_ind = inner.enqueue_index.load(Ordering::Relaxed);
 
         Some(enq_ind)
     }
 
-    /// Checks the next dequeue index within the LFShardedRingBuf
+    /// Get the dequeue index within a shard. Returns None if the shard
+    /// index is invalid.
     ///
-    /// Time Complexity: O(s_t) where s_t is how long it takes to acquire a shard
+    /// Note the dequeue index is claimed in a Relaxed memory
+    /// ordering manner.
+    ///
+    /// Time Complexity: O(1)
     ///
     /// Space Complexity: O(1)
-    pub async fn next_dequeue_index_for_shard(&self, shard_ind: usize) -> Option<usize> {
-        if shard_ind >= self.shards {
-            println!("Invalid shard index");
+    #[inline(always)]
+    pub fn get_deq_ind_for_shard(&self, shard_ind: usize) -> Option<usize> {
+        if shard_ind >= self.shard_locks.len() {
             return None;
-        }
-
-        // spin trying to grab the shard
-        while !self.acquire_shard(shard_ind) {
-            yield_now().await;
         }
 
         // grab deq ind val
         let inner = &self.inner_rb[shard_ind];
-        let deq_ind = inner.dequeue_index.get();
+        let deq_ind = inner.dequeue_index.load(Ordering::Relaxed);
 
-        // release shard
-        self.release_shard(shard_ind);
         Some(deq_ind)
     }
 
-    /// Returns a clone of the item within the LFShardedRingBuf
+    /// Gets the total number of jobs within a shard. Returns None if the shard
+    /// index is invalid.
+    ///
+    /// Note that the job count is claimed in a Relaxed memory ordering manner.
+    ///
+    /// Time Complexity: O(1)
+    ///
+    /// Space Complexity: O(1)
+    #[inline(always)]
+    pub fn get_job_count_at_shard(&self, shard_ind: usize) -> Option<usize> {
+        if shard_ind >= self.shard_locks.len() {
+            return None;
+        }
+
+        Some(self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed))
+    }
+
+    /// Helper function to see if a given index inside of a shard does
+    /// indeed contain a valid item
+    #[inline(always)]
+    fn is_item_in_shard(&self, item_ind: usize, shard_ind: usize) -> bool {
+        let enqueue_ind = self.inner_rb[shard_ind]
+            .enqueue_index
+            .load(Ordering::Relaxed);
+        let dequeue_ind = self.inner_rb[shard_ind]
+            .dequeue_index
+            .load(Ordering::Relaxed);
+
+        if enqueue_ind > dequeue_ind {
+            item_ind < enqueue_ind && item_ind >= dequeue_ind
+        } else if enqueue_ind < dequeue_ind {
+            item_ind >= dequeue_ind || item_ind < enqueue_ind
+        } else {
+            false
+        }
+    }
+
+    /// Returns a clone of the item within the LFShardedRingBuf or
+    /// None if the shard index/item index is invalid or if there exists
+    /// no item inside that position
     ///
     /// The T object inside the ring buffer *must* implement the Clone trait
     ///
@@ -477,21 +601,21 @@ impl<T> LFShardedRingBuf<T> {
     /// Where O(T_t) and O(T_s) is the time and space complexity required to
     /// clone the internals of the T object itself and s_t is the time it takes
     /// to acquire the shard
-    pub async fn get_item_in_shard(&self, item_index: usize, shard_ind: usize) -> Option<T>
+    pub async fn get_item_in_shard(&self, item_ind: usize, shard_ind: usize) -> Option<T>
     where
         T: Clone,
     {
-        if shard_ind >= self.shards {
-            println!("Invalid shard index");
+        if shard_ind >= self.shard_locks.len() {
             return None;
         }
 
-        if item_index >= self.max_capacity_per_shard {
-            println!("Invalid item index");
+        if item_ind >= self.inner_rb[shard_ind].items.len() {
             return None;
         }
 
-        // spin trying to grab the shard
+        // spin trying to grab the shard to ensure proper
+        // snapshot of items, enqueue, and dequeue indices in
+        // shard
         while !self.acquire_shard(shard_ind) {
             yield_now().await;
         }
@@ -499,14 +623,10 @@ impl<T> LFShardedRingBuf<T> {
         // clone item in shard
         let inner = &self.inner_rb[shard_ind];
         // SAFETY: We know for certain there's an item inside the ring buffer if
-        // item index is in [dequeue ind, enqueue ind)
+        // item index is in [dequeue ind, enqueue ind) + wraparound
         let item = unsafe {
-            if item_index >= inner.dequeue_index.get()
-                && inner.enqueue_index.get() < inner.dequeue_index.get()
-                || item_index < inner.enqueue_index.get()
-                    && inner.enqueue_index.get() > inner.dequeue_index.get()
-            {
-                let val_ref = (*inner.items[item_index].get()).assume_init_ref();
+            if self.is_item_in_shard(item_ind, shard_ind) {
+                let val_ref = (*inner.items[item_ind].get()).assume_init_ref();
                 Some(val_ref.clone())
             } else {
                 None
@@ -519,7 +639,8 @@ impl<T> LFShardedRingBuf<T> {
         item
     }
 
-    /// Returns a clone of a specific InnerRingBuffer shard in its current state
+    /// Returns a clone of a specific InnerRingBuffer shard or
+    /// None if the shard index is invalid
     ///
     /// The T object inside the ring buffer *must* implement the Clone trait
     ///
@@ -534,8 +655,8 @@ impl<T> LFShardedRingBuf<T> {
     where
         T: Clone,
     {
-        if shard_ind >= self.shards {
-            println!("Invalid shard index");
+        if shard_ind >= self.shard_locks.len() {
+            debug_assert!(shard_ind >= self.shard_locks.len(), "Invalid shard index");
             return None;
         }
 
@@ -548,15 +669,11 @@ impl<T> LFShardedRingBuf<T> {
         let inner = &self.inner_rb[shard_ind];
         let items = {
             let mut vec = Vec::new();
-            let dequeue_ind = inner.dequeue_index.get();
-            let enqueue_ind = inner.enqueue_index.get();
 
             // SAFETY: We know for certain there's an item inside the ring buffer if
-            // item index is in [dequeue ind, enqueue ind)
+            // item index is in [dequeue ind, enqueue ind) + wraparound
             for i in 0..inner.items.len() {
-                if i >= dequeue_ind && enqueue_ind < dequeue_ind
-                    || i < enqueue_ind && enqueue_ind > dequeue_ind
-                {
+                if self.is_item_in_shard(i, shard_ind) {
                     let val_ref = unsafe { (*inner.items[i].get()).assume_init_ref() };
                     vec.push(Some(val_ref.clone()))
                 } else {
@@ -589,7 +706,7 @@ impl<T> LFShardedRingBuf<T> {
     where
         T: Clone,
     {
-        // acquire shards
+        // acquire shards to obtain proper snapshot
         for i in 0..self.shard_locks.len() {
             while !self.acquire_shard(i) {
                 yield_now().await;
@@ -600,18 +717,15 @@ impl<T> LFShardedRingBuf<T> {
         let inner = &self.inner_rb;
 
         // clone items in each shard
-        for shard in inner {
+        for shard_ind in 0..inner.len() {
+            let shard = &inner[shard_ind];
             let items = {
                 let mut shard_vec = Vec::new();
-                let dequeue_ind = shard.dequeue_index.get();
-                let enqueue_ind = shard.enqueue_index.get();
 
                 // SAFETY: We know for certain there's an item inside the ring buffer if
-                // item index is in [dequeue ind, enqueue ind)
+                // item index is in [dequeue ind, enqueue ind) + wraparound
                 for i in 0..shard.items.len() {
-                    if i >= dequeue_ind && enqueue_ind < dequeue_ind
-                        || i < enqueue_ind && enqueue_ind > dequeue_ind
-                    {
+                    if self.is_item_in_shard(i, shard_ind) {
                         let val_ref = unsafe { (*shard.items[i].get()).assume_init_ref() };
                         shard_vec.push(Some(val_ref.clone()))
                     } else {
@@ -651,19 +765,15 @@ impl<T> LFShardedRingBuf<T> {
         }
 
         // Print items out and release shard
-        for shard in 0..self.shards {
+        for shard in 0..self.shard_locks.len() {
             let inner_shard = &self.inner_rb[shard];
-            let dequeue_ind = inner_shard.dequeue_index.get();
-            let enqueue_ind = inner_shard.enqueue_index.get();
             print!("Shard {shard}: ");
             print!("[");
 
-            // SAFETY: Only print values in between [dequeue_ind, enqueue_ind)
+            // SAFETY: Only print values in between [dequeue_ind, enqueue_ind) + wraparound
             // otherwise print None as a placeholder value
             for i in 0..inner_shard.items.len() {
-                if i >= dequeue_ind && enqueue_ind < dequeue_ind
-                    || i < enqueue_ind && enqueue_ind > dequeue_ind
-                {
+                if self.is_item_in_shard(i, shard) {
                     let val_ref = unsafe { (*inner_shard.items[i].get()).assume_init_ref() };
                     print!("{val_ref:?}, ");
                 } else {
@@ -683,14 +793,14 @@ impl<T> LFShardedRingBuf<T> {
 unsafe impl<T: Send> Sync for InnerRingBuffer<T> {}
 unsafe impl<T: Send> Sync for LFShardedRingBuf<T> {}
 
-// Destructor method created for InnerRingBuffer<T> to clean up
+// Destructor trait created for InnerRingBuffer<T> to clean up
 // memory allocated onto MaybeUninit<T> when LFShardedRingBuf<T>
 // goes out of scope
 impl<T> Drop for InnerRingBuffer<T> {
     fn drop(&mut self) {
         let capacity = self.items.len();
-        let mut drop_index = self.dequeue_index.get();
-        let stop_index = self.enqueue_index.get();
+        let mut drop_index = self.dequeue_index.load(Ordering::Relaxed);
+        let stop_index = self.enqueue_index.load(Ordering::Relaxed);
 
         while drop_index != stop_index {
             unsafe { ptr::drop_in_place((*self.items[drop_index].get()).as_mut_ptr()) }
