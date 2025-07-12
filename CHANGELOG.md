@@ -1,5 +1,22 @@
 # Change Log for lf-shardedringbuf:
 
+## In v3.1.0:
+* Metadata in `LFShardedRingBuf<T>` is once again refactored such that everything uses atomic primitives (i.e. `Box<[UnsafeCell<MaybeUninit<T>>]>` -> `Box<[AtomicPtr<MaybeUninit<T>>]>`). It implement `Send` and `Sync` by default now!
+* Some methods have been renamed (for better naming conventions and these names are finalized moving forward) such as:
+    * `LFShardedRingBuf::concurrent_clear` -> `LFShardedRingBuf::async_clear`
+    * `LFShardedRingBuf::get_enq_ind_for_shard` -> `LFShardedRingBuf::get_enq_ind_at_shard`
+    * `LFShardedRingBuf::get_deq_ind_for_shard` -> `LFShardedRingBuf::get_deq_ind_at_shard`
+    * `LFShardedRingBuf::get_item_in_shard` -> `LFShardedRingBuf::get_item_at_shard`
+    * `LFShardedRingBuf::rb_items_at_shard` -> `LFShardedRingBuf::async_clone_items_at_shard`
+    * `LFShardedRingBuf::rb_items` -> `LFShardedRingBuf::async_clone_items`
+    * `LFShardedRingBuf::print_buffer` -> `LFShardedRingBuf::async_print`
+    * Note these methods might be moved into traits in the future.
+* Internally, a `ShardLockGuard` type is created and used to make locking the shard in many of these
+async function ergonomic and in theory cancel safe (though this of course needs testing)
+* All methods for this data structure have a `sync` and `async` version (though testing still needs to be performed on many of these methods for thread safety and cancel safetiness), except for the following:
+    * `LFShardedRingBuf::enqueue` and `LFShardedRingBuf::dequeue` methods, which remains to be async. If there is interest, a sync version of these methods can be made that uses `thread_local` variables, but keep in mind that this buffer highly benefits from being an asynchronous data structure as a result of context switching tasks to threads
+* New benchmarking in `README.md`
+
 ## In v2.1.0:
 * Removed unnecessary metadata in `LFShardedRingBuf<T>` and changed `poisoned` field inside `LFShardedRingBuf<T>` as well as the `InnerRingBuffer<T>` `enqueue_ind`, `dequeue_ind`, and `job_count` fields from cell variants (i.e. `Cell<usize>`, `Cell<bool>`) to atomic variants (`AtomicUsize`, `AtomicBool`) for safe accesses among threads (and correctness)
 * `LFShardedRingBuf<T>` now supports uneven shards (that is if request capacity is not divisible by requested number of shards) and balances uneven capacity among each shard nicely.

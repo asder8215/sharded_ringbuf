@@ -1,0 +1,32 @@
+I tried benchmarking this ring buffer (and comparing it with kanal async) with the following parameters:
+* 4 tasks for enqueuing and 4 tasks for dequeuing (each adding/removing 250,000 usize)
+* 4 worker threads
+* Total capacity of the buffer is 1024 entries
+* Varying shards value I experimented on starting (4, 8, 16, 32, 64, 128, 256) using a ShiftBy policies using random initial indices for enqueuer and dequeuer tasks and shift of 4.
+
+Note I am running this on:
+Machine: AMD Ryzen 7 5800X 3.8 GHz 8-Core Processor
+Rust:rustc rustc 1.87.0 (17067e9ac 2025-05-09)
+OS: Windows 10
+Date: July 11, 2025
+
+The cargo benchmarking in GitHub Action may not reflect the full possibility of this buffer due to limited number of threads and small cache size. To check out previous cargo benchmarking results, you can look at `benchmark_res`.
+
+The following are timing results using `cargo bench` with varying shards in the order mentioned above:
+
+Without barrier synchronization:
+kanal_async/1024        time:   [17.980 ms 18.192 ms 18.404 ms]
+
+4shard_buffer/1024      time:   [11.935 ms 11.970 ms 12.014 ms]
+
+8shard_buffer/1024      time:   [13.449 ms 13.479 ms 13.517 ms]
+
+16shard_buffer/1024     time:   [17.725 ms 17.771 ms 17.824 ms]
+
+32shard_buffer/1024     time:   [22.640 ms 22.768 ms 22.914 ms]
+
+64shard_buffer/1024     time:   [27.089 ms 27.396 ms 27.719 ms]
+
+128shard_buffer/1024    time:   [25.890 ms 26.242 ms 26.611 ms]
+
+256shard_buffer/1024    time:   [21.637 ms 22.008 ms 22.387 ms]
