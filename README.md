@@ -148,9 +148,9 @@ I tried benchmarking this ring buffer (and comparing it with kanal async) with t
 
 Note I am running this on:
 Machine: AMD Ryzen 7 5800X 3.8 GHz 8-Core Processor
-Rust:rustc rustc 1.87.0 (17067e9ac 2025-05-09)
+Rust: rustc rustc 1.87.0 (17067e9ac 2025-05-09)
 OS: Windows 10
-Date: July 9, 2025
+Date: July 11, 2025
 
 The cargo benchmarking in GitHub Action may not reflect the full possibility of this buffer due to limited number of threads and small cache size. To check out previous cargo benchmarking results, you can look at `benchmark_res`.
 
@@ -159,40 +159,40 @@ The following are timing results using `cargo bench` with varying shards in the 
 Without barrier synchronization:
 
 ```
-kanal_async/1024        time:   [17.980 ms 18.192 ms 18.404 ms]
+kanal_async/1024        time:   [22.742 ms 22.978 ms 23.212 ms]
 
-4shard_buffer/1024      time:   [11.935 ms 11.970 ms 12.014 ms]
+4shard_buffer/1024      time:   [12.270 ms 12.300 ms 12.336 ms]
 
-8shard_buffer/1024      time:   [13.449 ms 13.479 ms 13.517 ms]
+8shard_buffer/1024      time:   [14.272 ms 14.308 ms 14.355 ms]
 
-16shard_buffer/1024     time:   [17.725 ms 17.771 ms 17.824 ms]
+16shard_buffer/1024     time:   [18.579 ms 18.605 ms 18.632 ms]
 
-32shard_buffer/1024     time:   [22.640 ms 22.768 ms 22.914 ms]
+32shard_buffer/1024     time:   [23.438 ms 23.517 ms 23.600 ms]
 
-64shard_buffer/1024     time:   [27.089 ms 27.396 ms 27.719 ms]
+64shard_buffer/1024     time:   [33.723 ms 34.235 ms 34.768 ms]
 
-128shard_buffer/1024    time:   [25.890 ms 26.242 ms 26.611 ms]
+128shard_buffer/1024    time:   [25.435 ms 25.763 ms 26.098 ms]
 
-256shard_buffer/1024    time:   [21.637 ms 22.008 ms 22.387 ms]
+256shard_buffer/1024    time:   [21.358 ms 21.715 ms 22.081 ms]
 ```
 
 With barrier synchronization on all tasks:
 ```
-kanal_async/1024        time:   [18.556 ms 18.757 ms 18.960 ms]
+kanal_async/1024        time:   [23.162 ms 23.440 ms 23.713 ms]
 
-4shard_buffer/1024      time:   [11.811 ms 11.832 ms 11.858 ms]
+4shard_buffer/1024      time:   [13.580 ms 13.949 ms 14.343 ms]
 
-8shard_buffer/1024      time:   [13.589 ms 13.641 ms 13.702 ms]
+8shard_buffer/1024      time:   [14.133 ms 14.173 ms 14.220 ms]
 
-16shard_buffer/1024     time:   [18.343 ms 18.572 ms 18.819 ms]
+16shard_buffer/1024     time:   [19.156 ms 19.262 ms 19.367 ms]
 
-32shard_buffer/1024     time:   [23.209 ms 23.405 ms 23.616 ms]
+32shard_buffer/1024     time:   [25.103 ms 25.231 ms 25.367 ms]
 
-64shard_buffer/1024     time:   [28.632 ms 29.100 ms 29.583 ms]
+64shard_buffer/1024     time:   [28.810 ms 29.260 ms 29.753 ms]
 
-128shard_buffer/1024    time:   [26.119 ms 26.464 ms 26.816 ms]
+128shard_buffer/1024    time:   [23.246 ms 23.786 ms 24.362 ms]
 
-256shard_buffer/1024    time:   [20.831 ms 21.199 ms 21.569 ms]
+256shard_buffer/1024    time:   [22.845 ms 23.274 ms 23.727 ms]
 ```
 
 # Some Considerations When Using This Buffer
