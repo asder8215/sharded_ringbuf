@@ -544,7 +544,7 @@ impl<T> LFShardedRingBuf<T> {
                 .load(Ordering::Acquire);
             while drop_index != stop_index {
                 // SAFETY: This will only clear out initialized values that have not
-                // been dequeued. *Note again* this method is not thread safe.
+                // been dequeued.
                 unsafe {
                     ptr::drop_in_place(
                         (*self.inner_rb[shard_ind].items[drop_index].load(Ordering::Relaxed))
