@@ -1,3 +1,7 @@
+[![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/asder8215/lf-shardedringbuf/rust.yml?style=for-the-badge&logo=github)](https://github.com/asder8215/lf-shardedringbuf)
+[![Crates.io](https://img.shields.io/crates/v/lf_shardedringbuf.svg?style=for-the-badge&logo=docsdotrs)](https://crates.io/crates/lf-shardedringbuf)
+[![Docs](https://img.shields.io/docsrs/lf-shardedringbuf?style=for-the-badge&logo=rust)](https://docs.rs/lf-shardedringbuf/latest/lf_shardedringbuf/)
+
 # lf-shardedringbuf
 An async, lock-free, sharded, cache-aware SPSC/MPSC/MPMC ring buffer in Rust.
 
