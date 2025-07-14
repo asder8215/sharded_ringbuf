@@ -72,7 +72,10 @@ pub(crate) fn set_task_done() {
     TASK_NODE
         .try_with(|ptr| {
             // let TaskNodePtr(task_ptr) = ptr.get();
-            unsafe { (*ptr.get().0).is_done.store(true, Ordering::Relaxed) }
+            unsafe { 
+                (*ptr.get().0).is_done.store(true, Ordering::Relaxed) 
+                // (*ptr.get().0).is_done.store(true, Ordering::Release)
+            }
         })
         .unwrap_or_else(|_| {
             panic!(

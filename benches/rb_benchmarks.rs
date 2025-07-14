@@ -149,8 +149,11 @@ async fn benchmark_lfsrb(capacity: usize, shards: usize) {
     }
 
     terminate_assigner(rb.clone());
+    // println!("Assigner has been signaled termination");
 
     let _ = assigner.await;
+    // println!("Assigner has been terminated");
+
 }
 
 async fn benchmark_lfsrb_shiftby(capacity: usize, shards: usize) {
@@ -374,6 +377,7 @@ fn benchmark_multithreaded(c: &mut Criterion) {
             b.to_async(&runtime).iter_custom(|iters| async move {
                 let mut total = Duration::ZERO;
                 for _i in 0..iters {
+                    // println!("Completed an iter!");
                     let start = Instant::now();
                     benchmark_lfsrb(s, 1000).await;
                     let end = Instant::now();

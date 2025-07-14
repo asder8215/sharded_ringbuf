@@ -242,6 +242,8 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
             // the list
             if buffer.assigner_terminate.load(Ordering::Relaxed) && current.0.is_null() {
                 break;
+            } else if buffer.assigner_terminate.load(Ordering::Relaxed) && !current.0.is_null() {
+                println!("I haven't freed {:?}", unsafe {&*current.0});
             }
 
             while !current.0.is_null() {
@@ -260,7 +262,8 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                     // shard to clean it up
                     // Dequeuers will never be done without a pair (if user is responsible with
                     // using this function)
-                    if is_done && is_paired && role == TaskRole::Enqueue {
+                    // if is_done && is_paired && role == TaskRole::Enqueue {
+                    if is_done && buffer.is_shard_empty(task_node.shard_ind.load(Ordering::Relaxed)) && role == TaskRole::Enqueue {
                         // println!("Anybody got freed?");
                         // println!("I freed an enqueuer");
                         // first check hashmap because we need to see a few things:
@@ -397,6 +400,7 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                             match role {
                                 TaskRole::Enqueue => {
                                     if !(*pair.0).is_done.load(Ordering::Relaxed) {
+                                        println!("Did I happen?");
                                         // if my shard is not empty, I need to be unpaired but not reassigned yet!
                                         // if I see another enqueuer task here who is not done yet, then I can
                                         // offer to work on dequeuing that enqueuer items, so just unpair but not reassign
@@ -514,17 +518,17 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
 
                     // This is our second pointer, we use this to scan forward
                     // for a match to pair with
-                    // let mut scan_prev = current;
-                    // let mut scan = TaskNodePtr(task_node.next.load(Ordering::Relaxed));
+                    let mut scan_prev = current;
+                    let mut scan = TaskNodePtr(task_node.next.load(Ordering::Relaxed));
                 
-                    let mut scan_prev = match scan_prev_rebound_ptr {
-                        None => current,
-                        Some(scan_prev_rebound) => scan_prev_rebound
-                    };
-                    let mut scan = match scan_rebound_ptr {
-                        None => TaskNodePtr(task_node.next.load(Ordering::Relaxed)),
-                        Some(scan_rebound) => scan_rebound
-                    };
+                    // let mut scan_prev = match scan_prev_rebound_ptr {
+                    //     None => current,
+                    //     Some(scan_prev_rebound) => scan_prev_rebound
+                    // };
+                    // let mut scan = match scan_rebound_ptr {
+                    //     None => TaskNodePtr(task_node.next.load(Ordering::Relaxed)),
+                    //     Some(scan_rebound) => scan_rebound
+                    // };
                     let rebound_found = false;
 
                     while !scan.0.is_null() {
@@ -795,27 +799,27 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                 pairs_map.insert(deq, enq);
 
                                 // This refers to the one you just paired or matched up with!
-                                // prev = scan;
-                                // current = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
+                                prev = scan;
+                                current = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
 
 
                                 // True rebound
-                                prev = match prev_rebound_ptr {
-                                    None => scan,
-                                    Some(prev_rebound) => {
-                                        prev_rebound_ptr = None;
-                                        prev_rebound
-                                    }
-                                };
-                                current = match curr_rebound_ptr {
-                                    None => TaskNodePtr(scan_node.next.load(Ordering::Relaxed)),
-                                    Some(current_rebound_ptr) => {
-                                        curr_rebound_ptr = None;
-                                        current_rebound_ptr
-                                    }
-                                };
-                                scan_prev_rebound_ptr = Some(scan_prev);
-                                scan_rebound_ptr = Some(TaskNodePtr(scan_node.next.load(Ordering::Relaxed)));
+                                // prev = match prev_rebound_ptr {
+                                //     None => scan,
+                                //     Some(prev_rebound) => {
+                                //         prev_rebound_ptr = None;
+                                //         prev_rebound
+                                //     }
+                                // };
+                                // current = match curr_rebound_ptr {
+                                //     None => TaskNodePtr(scan_node.next.load(Ordering::Relaxed)),
+                                //     Some(current_rebound_ptr) => {
+                                //         curr_rebound_ptr = None;
+                                //         current_rebound_ptr
+                                //     }
+                                // };
+                                // scan_prev_rebound_ptr = Some(scan_prev);
+                                // scan_rebound_ptr = Some(TaskNodePtr(scan_node.next.load(Ordering::Relaxed)));
                                 break;
                             }
                             // } else {
