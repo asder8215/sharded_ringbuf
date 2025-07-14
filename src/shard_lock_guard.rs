@@ -10,7 +10,7 @@ pub(crate) struct ShardLockGuard<'a> {
 impl<'a> ShardLockGuard<'a> {
     #[inline(always)]
     fn try_acquire_lock(lock: &'a AtomicBool) -> bool {
-        lock.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        lock.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
     }
 
