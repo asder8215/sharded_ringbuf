@@ -264,7 +264,7 @@ impl<T> LFShardedRingBuf<T> {
                     Acquire::Dequeue => {
                         while !task_node.is_assigned.load(Ordering::Relaxed) {
                             if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
-                                println!("This occurs.");
+                                // println!("This occurs.");
                                 return 0;
                             }
                             yield_now().await;
@@ -853,6 +853,16 @@ impl<T> LFShardedRingBuf<T> {
         }
 
         Some(self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed))
+    }
+
+    #[inline(always)]
+    pub fn get_job_count_total(&self) -> Vec<usize> {
+        let mut count = Vec::new();
+
+        for shard in &self.inner_rb {
+            count.push(shard.job_count.load(Ordering::Relaxed)); 
+        }
+        count
     }
 
     /// Gets the total number of jobs within a shard in an async manner.
