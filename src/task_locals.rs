@@ -10,10 +10,11 @@ use std::{
 use tokio::task_local;
 
 task_local! {
-    pub(crate) static SHARD_INDEX: Cell<Option<usize>>;     // initial shard index of task
-    pub(crate) static SHIFT: Cell<usize>;                   // how much to shift the task's shard index by
-    pub(crate) static SHARD_POLICY: Cell<ShardPolicyKind>;  // shard policy for buffer
-    pub(crate) static TASK_NODE: Cell<CachePadded<TaskNodePtr>>;         // The enqueuer/dequeuer task has a reference to its node
+    pub(crate) static SHARD_INDEX: Cell<Option<usize>>;           // initial shard index of task
+    pub(crate) static SHIFT: Cell<usize>;                         // how much to shift the task's shard index by
+    pub(crate) static SHARD_POLICY: Cell<ShardPolicyKind>;        // shard policy for buffer
+    pub(crate) static TASK_NODE: Cell<CachePadded<TaskNodePtr>>;  // The enqueuer/dequeuer task has a reference to its node
+    pub(crate) static OPERATION_COUNT: Cell<usize>                // For CFT policy, to ensure fairness the assigner moves the dequeuer/enqueuer to the back of the linked list
 }
 
 // FIXME: change unwrap_or_else to expect
@@ -76,6 +77,26 @@ pub(crate) fn set_task_done() {
                 (*ptr.get().0).is_done.store(true, Ordering::Relaxed) 
                 // (*ptr.get().0).is_done.store(true, Ordering::Release)
             }
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "TASK_NODE is not initialized. Use `.spawn_buffer_task()` with CFT shard policy."
+            )
+        })
+}
+
+#[inline(always)]
+pub(crate) fn get_operation_count() -> usize {
+    OPERATION_COUNT.try_with(|cell| cell.get()).unwrap_or_else(|_| {
+        panic!("TASK_NODE is not initialized. Use `.spawn_buffer_task()` with CFT shard policy.")
+    })
+}
+
+#[inline(always)]
+pub(crate) fn set_operation_count(item_num: usize) {
+    OPERATION_COUNT
+        .try_with(|cell| {
+            cell.set( item_num);
         })
         .unwrap_or_else(|_| {
             panic!(

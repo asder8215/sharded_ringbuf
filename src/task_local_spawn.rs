@@ -1,11 +1,7 @@
 use crate::{
-    LFShardedRingBuf, ShardPolicy, TaskRole,
-    shard_policies::ShardPolicyKind,
-    task_locals::{
-        SHARD_INDEX, SHARD_POLICY, SHIFT, TASK_NODE, get_shard_ind, set_shard_ind, set_task_done,
-        set_task_node,
-    },
-    task_node::{TaskNode, TaskNodePtr},
+    shard_policies::ShardPolicyKind, task_locals::{
+        get_shard_ind, set_shard_ind, set_task_done, set_task_node, OPERATION_COUNT, SHARD_INDEX, SHARD_POLICY, SHIFT, TASK_NODE
+    }, task_node::{TaskNode, TaskNodePtr}, LFShardedRingBuf, ShardPolicy, TaskRole
 };
 use crossbeam_utils::CachePadded;
 use std::{
@@ -156,7 +152,7 @@ where
             ),
         )),
         ShardPolicy::CFT { role, buffer } => {
-            runtime.spawn(TASK_NODE.scope(
+            runtime.spawn(OPERATION_COUNT.scope(Cell::new(0), TASK_NODE.scope(
                 Cell::new(CachePadded::new(TaskNodePtr(ptr::null_mut()))),
                 SHARD_POLICY.scope(
                     Cell::new(ShardPolicyKind::CFT),
@@ -211,7 +207,7 @@ where
                         }),
                     ),
                 ),
-            ))
+            )))
         }
     }
 }
@@ -236,11 +232,6 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
             let mut prev = TaskNodePtr(ptr::null_mut());
             let mut current = buffer_clone.get_head();
 
-            let mut prev_rebound_ptr: Option<TaskNodePtr> = None;
-            let mut curr_rebound_ptr: Option<TaskNodePtr> = None;
-            let mut scan_prev_rebound_ptr: Option<TaskNodePtr> = None;
-            let mut scan_rebound_ptr: Option<TaskNodePtr> = None;
-
             // assigner can get out of this function once it complete cleaning up
             // the list
             if buffer.assigner_terminate.load(Ordering::Relaxed) && current.0.is_null() {
@@ -262,12 +253,8 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                     let pairs = shard_task_map
                             .get_mut(shard_ind);
 
-                    // in the case that the enqueuer task was never paired with dequeuer task
-                    // and it was done, then try to pair it with a dequeuer task to find the
-                    // shard to clean it up
-                    // Dequeuers will never be done without a pair (if user is responsible with
-                    // using this function)
-                    // if is_done && is_paired && role == TaskRole::Enqueue {
+                    // in the case that the enqueuer task is done and the shard its at is
+                    // not empty, that means that a dequeuer task has not completed its
                     if is_done && is_shard_empty && role == TaskRole::Enqueue {
                         // first check hashmap because we need to see a few things:
                         // if this is an enqueuer that was done first, and the dequeuer
@@ -451,16 +438,6 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                     // for a match to pair with
                     let mut scan_prev = current;
                     let mut scan = TaskNodePtr(task_node.next.load(Ordering::Relaxed));
-                
-                    // let mut scan_prev = match scan_prev_rebound_ptr {
-                    //     None => current,
-                    //     Some(scan_prev_rebound) => scan_prev_rebound
-                    // };
-                    // let mut scan = match scan_rebound_ptr {
-                    //     None => TaskNodePtr(task_node.next.load(Ordering::Relaxed)),
-                    //     Some(scan_rebound) => scan_rebound
-                    // };
-                    let rebound_found = false;
 
                     while !scan.0.is_null() {
                         let scan_node = &*scan.0;
@@ -501,8 +478,7 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                         .find(|ptr| {
                                             (*ptr.0).role == TaskRole::Enqueue
                                                 && (*ptr.0).is_done.load(Ordering::Relaxed)
-                                                    == false &&
-                                                    !(*ptr.0).is_paired.load(Ordering::Relaxed)
+                                                    == false
                                         })
                                         .is_some()
                                     {
@@ -648,6 +624,7 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                             set_shard_ind((shard_index + 1) % buffer.get_num_of_shards());
                         } else if scan_role == TaskRole::Dequeue && !scan_paired && scan_assigned {
                             // set unassigned if there is nothing this dequeuer is doing and it is not done yet
+
                             let pairs = shard_task_map
                                 .get_mut(&scan_node.shard_ind.load(Ordering::Relaxed))
                                 .unwrap();
@@ -656,8 +633,8 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                     .iter()
                                     .find(|ptr| {
                                         (*ptr.0).role == TaskRole::Enqueue
-                                            && (*ptr.0).is_done.load(Ordering::Relaxed) == false &&
-                                            !(*ptr.0).is_paired.load(Ordering::Relaxed)
+                                            && (*ptr.0).is_done.load(Ordering::Relaxed) == false 
+                                            //&& !(*ptr.0).is_paired.load(Ordering::Relaxed)
                                     })
                                     .is_none()
                             {
@@ -669,8 +646,7 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                             }
                         }
 
-                        // The role I got from prev while loop does not match this one
-                        // so work with it!
+                        // Sweet I found my pair because our roles don't match!
                         if scan_role != role {
                             let (enq, deq) = match role {
                                 TaskRole::Enqueue => (current, scan),
@@ -704,33 +680,8 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                 prev = scan;
                                 current = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
 
-
-                                // True rebound
-                                // prev = match prev_rebound_ptr {
-                                //     None => scan,
-                                //     Some(prev_rebound) => {
-                                //         prev_rebound_ptr = None;
-                                //         prev_rebound
-                                //     }
-                                // };
-                                // current = match curr_rebound_ptr {
-                                //     None => TaskNodePtr(scan_node.next.load(Ordering::Relaxed)),
-                                //     Some(current_rebound_ptr) => {
-                                //         curr_rebound_ptr = None;
-                                //         current_rebound_ptr
-                                //     }
-                                // };
-                                // scan_prev_rebound_ptr = Some(scan_prev);
-                                // scan_rebound_ptr = Some(TaskNodePtr(scan_node.next.load(Ordering::Relaxed)));
                                 break;
                             }
-                        } else {
-                            // current needs to rebound back to this pointer because
-                            // this is the next one that is not paired
-                            // if !rebound_found {
-                            //     prev_rebound_ptr = Some(scan_prev);
-                            //     curr_rebound_ptr = Some(scan);
-                            // }
                         }
                         scan_prev = scan;
                         scan = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));

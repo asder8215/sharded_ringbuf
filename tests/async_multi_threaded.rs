@@ -700,6 +700,80 @@ async fn test_cft_more_deq_than_enq() {
 }
 
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_cft_more_deq_items_than_enq() {
+    const MAX_ITEMS: usize = 100000;
+    const CAPACITY: usize = 1024;
+    const MAX_SHARDS: usize = 5;
+    let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(CAPACITY, MAX_SHARDS));
+
+    assert!(rb.is_empty());
+
+    let mut deq_threads = Vec::new();
+    let mut enq_threads: Vec<JoinHandle<()>> = Vec::new();
+
+    let assigner = spawn_assigner(rb.clone());
+
+    // Spawn MAX_TASKS dequeuer tasks
+    for _ in 0..2 {
+        let rb = Arc::clone(&rb);
+        let handler = spawn_buffer_task(
+            ShardPolicy::CFT {
+                role: TaskRole::Dequeue,
+                buffer: rb.clone(),
+            },
+            async move {
+                let rb = rb.clone();
+                let mut counter: usize = 0;
+                for _i in 0..(3 * MAX_ITEMS)/2 {
+                    let item = rb.dequeue().await;
+                    match item {
+                        Some(_) => counter += 1,
+                        None => break,
+                    }
+                }
+                counter
+            },
+        );
+        deq_threads.push(handler);
+    }
+
+    // Spawn MAX_TASKS enqueuer tasks
+    for i in 1..3 {
+        let rb = Arc::clone(&rb);
+        let enq_handler = spawn_buffer_task(
+            ShardPolicy::CFT {
+                role: TaskRole::Enqueue,
+                buffer: rb.clone(),
+            },
+            async move {
+                let rb = rb.clone();
+                for i in 0..MAX_ITEMS * i {
+                    rb.enqueue(i).await;
+                }
+            },
+        );
+        enq_threads.push(enq_handler);
+    }
+
+    for enq in enq_threads {
+        enq.await.unwrap();
+    }
+
+    let mut items_taken: usize = 0;
+    while let Some(curr_thread) = deq_threads.pop() {
+        items_taken += curr_thread.await.unwrap();
+    }
+
+    terminate_assigner(rb.clone());
+
+    let _ = assigner.await;
+
+    assert!(rb.is_empty());
+
+    assert_eq!(3 * MAX_ITEMS, items_taken);
+}
+
 // #[tokio::test(flavor = "multi_thread")]
 // async fn test_shiftby_uneven_tasks() {
 //     const MAX_ITEMS: usize = 100000;

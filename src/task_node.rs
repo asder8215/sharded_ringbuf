@@ -27,12 +27,12 @@ pub enum TaskRole {
 /// later down the line)
 #[derive(Debug)]
 pub(crate) struct TaskNode {
-    pub(crate) role: TaskRole,            // A static role of what the Task is
-    pub(crate) is_done: AtomicBool, // If the task is completed (assigner reads, enq/deq writes)
-    pub(crate) is_paired: AtomicBool, // If the task is paired with deq/enq (assigner writes, enq/deq reads)
-    pub(crate) is_assigned: AtomicBool, // Whether the shard_ind is written or not (assigner writes, enq/deq reads)
-    pub(crate) shard_ind: AtomicUsize, // The shard index that a task will look at (assigner writes, enq/deq reads)
-    pub(crate) next: AtomicPtr<TaskNode>, // The next TaskNode
+    pub(crate) role: TaskRole,              // A static role of what the Task is
+    pub(crate) is_done: AtomicBool,         // If the task is completed (assigner reads, enq/deq writes)
+    pub(crate) is_paired: AtomicBool,       // If the task is paired with deq/enq (assigner writes, enq/deq reads)
+    pub(crate) is_assigned: AtomicBool,     // Whether the shard_ind is written or not (assigner writes, enq/deq reads)
+    pub(crate) shard_ind: AtomicUsize,      // The shard index that a task will look at (assigner writes, enq/deq reads)
+    pub(crate) next: AtomicPtr<TaskNode>,   // The next TaskNode
 }
 
 impl TaskNode {

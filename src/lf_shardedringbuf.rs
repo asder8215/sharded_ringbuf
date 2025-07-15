@@ -1,7 +1,7 @@
 use crate::{
     shard_lock_guard::ShardLockGuard,
     shard_policies::ShardPolicyKind,
-    task_locals::{get_shard_ind, get_shard_policy, get_shift, get_task_node, set_shard_ind},
+    task_locals::{get_operation_count, get_shard_ind, get_shard_policy, get_shift, get_task_node, set_operation_count, set_shard_ind},
     task_node::{TaskNode, TaskNodePtr},
 };
 use crossbeam_utils::CachePadded;
@@ -262,6 +262,12 @@ impl<T> LFShardedRingBuf<T> {
                         task_node.shard_ind.load(Ordering::Relaxed)
                     }
                     Acquire::Dequeue => {
+                        // if get_operation_count() == self.get_total_capacity() / self.get_num_of_shards() {
+                        //     set_operation_count(0);
+                        //     task_node.is_assigned.store(false, Ordering::Relaxed);
+                        //     task_node.is_paired.store(false, Ordering::Relaxed);
+                        // }
+
                         while !task_node.is_assigned.load(Ordering::Relaxed) {
                             if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
                                 // println!("This occurs.");
@@ -344,7 +350,8 @@ impl<T> LFShardedRingBuf<T> {
             } else {
                 // The dequeuer needs to be updated/reassigned if its pairing
                 // enqueuer was completed before yielding here
-                if matches!(acquire, Acquire::Dequeue) {
+                let task_node = unsafe { &*get_task_node().0 };
+                if matches!(acquire, Acquire::Dequeue) && task_node.is_assigned.load(Ordering::Relaxed) {
                     current = unsafe { &*get_task_node().0 }
                         .shard_ind
                         .load(Ordering::Relaxed);
@@ -432,6 +439,8 @@ impl<T> LFShardedRingBuf<T> {
             self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) - 1,
             Ordering::Release,
         );
+
+        // set_operation_count(get_operation_count() + 1);
         self.shard_locks[shard_ind].store(false, Ordering::Release);
     }
 
