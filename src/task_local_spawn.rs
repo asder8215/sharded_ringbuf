@@ -270,6 +270,8 @@ where
 pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandle<()> {
     spawn(SHARD_INDEX.scope(Cell::new(Some(0)), async move {
         let buffer_clone = Arc::clone(&buffer);
+        let mut shard_task_map: HashMap<usize, HashSet<TaskNodePtr>> = HashMap::new();
+        let mut pairs_map: HashMap<TaskNodePtr, TaskNodePtr> = HashMap::new();
         loop {
             // fetch head to start traversal!
             // let mut current = buffer.get_head_relaxed();
