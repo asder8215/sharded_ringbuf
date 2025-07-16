@@ -13,7 +13,7 @@ use tokio::task;
 // https://github.com/fereidani/rust-channel-benchmarks/tree/main?tab=readme-ov-file
 // const MAX_SHARDS: [usize; 7] = [4, 8, 16, 32, 64, 128, 256];
 const MAX_TASKS: usize = 1000;
-const MAX_SHARDS: usize = 1000; 
+const MAX_SHARDS: usize = 1000;
 // const MAX_TASKS: usize = 10;
 // const MAX_THREADS: usize = MAX_TASKS;
 const MAX_THREADS: usize = 16;
@@ -138,14 +138,19 @@ async fn benchmark_lfsrb(capacity: usize, shards: usize) {
     }
 
     // Wait for enqueuers
+    let mut counter = 0;
     for enq in enq_threads {
         enq.await.unwrap();
-        // println!("I'm done as enqueuer");
+        // println!("Finished enqueuer{}", counter);
+        counter += 1
     }
 
+    let mut counter = 0;
     // Wait for dequeuers
     for deq in deq_threads {
         deq.await.unwrap();
+        // println!("Finished dequeuer{}", counter);
+        counter += 1
         // println!("I'm done as dequeuer");
     }
 
@@ -154,7 +159,6 @@ async fn benchmark_lfsrb(capacity: usize, shards: usize) {
 
     let _ = assigner.await;
     // println!("Assigner has been terminated");
-
 }
 
 async fn benchmark_lfsrb_shiftby(capacity: usize, shards: usize) {
@@ -377,12 +381,14 @@ fn benchmark_multithreaded(c: &mut Criterion) {
             // The timing loops are the same as with the normal bencher.
             b.to_async(&runtime).iter_custom(|iters| async move {
                 let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    // println!("Completed an iter!");
+                // let mut counter = 0;
+                for _ in 0..iters {
+                    // println!("Completed iter {counter}!");
                     let start = Instant::now();
                     benchmark_lfsrb(s, MAX_SHARDS).await;
                     let end = Instant::now();
                     total += end - start;
+                    // counter += 1;
                 }
 
                 total

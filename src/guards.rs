@@ -1,10 +1,15 @@
-use std::{marker::PhantomData, pin::Pin, sync::atomic::{AtomicBool, Ordering}, task::{Context, Poll}, thread::sleep, time::Duration};
 use crossbeam_utils::CachePadded;
 use fastrand::usize as frand;
+use std::{
+    marker::PhantomData,
+    pin::Pin,
+    sync::atomic::{AtomicBool, Ordering},
+    task::{Context, Poll},
+    thread::sleep,
+    time::Duration,
+};
 use tokio::task::{id, yield_now};
 // use std::future::
-
-use crate::{task_locals::set_task_done, task_node::TaskNodePtr, LFShardedRingBuf};
 
 /// This is a guard for all the shards in LFShardedRingBuf struct
 /// Implemented to make certain functions cancel-safe
@@ -103,35 +108,35 @@ impl Drop for ShardLockGuard<'_> {
 //     }
 // }
 
-pub(crate) struct TaskFutureGuard<Fut, T> {
-    pub inner: Fut,
-    pub task_node_ptr: TaskNodePtr,
-    pub _phantom: PhantomData<T>
-}
+// pub(crate) struct TaskFutureGuard<Fut, T> {
+//     pub inner: Fut,
+//     pub task_node_ptr: TaskNodePtr,
+//     pub _phantom: PhantomData<T>
+// }
 
-impl<Fut, T> Future for TaskFutureGuard<Fut, T> 
-where
-    Fut: Future + Unpin + std::marker::Unpin,
-    T: Unpin
-{
-    type Output = Fut::Output;
+// impl<Fut, T> Future for TaskFutureGuard<Fut, T>
+// where
+//     Fut: Future + Unpin + std::marker::Unpin,
+//     T: Unpin
+// {
+//     type Output = Fut::Output;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Safety: We are pinned, so this is okay
+//     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+//         // Safety: We are pinned, so this is okay
 
-        let this = self.get_mut();
+//         let this = self.get_mut();
 
-        let pinned = unsafe { Pin::new_unchecked(&mut this.inner) };
-        // pinned.poll(cx)
-        pinned.poll(cx)
-    }
-}
+//         let pinned = unsafe { Pin::new_unchecked(&mut this.inner) };
+//         // pinned.poll(cx)
+//         pinned.poll(cx)
+//     }
+// }
 
-impl<Fut, T> Drop for TaskFutureGuard<Fut, T> {
-    fn drop(&mut self) {
-        // This runs if the task is cancelled (i.e., the future is dropped)
-        unsafe {
-            (*self.task_node_ptr.0).is_done.store(true, Ordering::Relaxed);
-        }
-    }
-}
+// impl<Fut, T> Drop for TaskFutureGuard<Fut, T> {
+//     fn drop(&mut self) {
+//         // This runs if the task is cancelled (i.e., the future is dropped)
+//         unsafe {
+//             (*self.task_node_ptr.0).is_done.store(true, Ordering::Relaxed);
+//         }
+//     }
+// }

@@ -33,7 +33,8 @@ pub struct LFShardedRingBuf<T> {
     // CachePadded to prevent false sharing
     inner_rb: Box<[CachePadded<InnerRingBuffer<T>>]>,
     poisoned: AtomicBool,
-    pub(crate) head: CachePadded<AtomicPtr<TaskNode>>,
+    pub(crate) head: AtomicPtr<TaskNode>,
+    pub(crate) tail: AtomicPtr<TaskNode>,
     pub(crate) assigner_terminate: AtomicBool,
 }
 
@@ -125,7 +126,8 @@ impl<T> LFShardedRingBuf<T> {
                 vec.into_boxed_slice()
             },
             poisoned: AtomicBool::new(false),
-            head: CachePadded::new(AtomicPtr::new(ptr::null_mut())),
+            head: AtomicPtr::new(ptr::null_mut()),
+            tail: AtomicPtr::new(ptr::null_mut()),
             assigner_terminate: AtomicBool::new(false),
         }
     }
@@ -138,7 +140,6 @@ impl<T> LFShardedRingBuf<T> {
     pub(crate) fn get_head(&self) -> TaskNodePtr {
         // TaskNodePtr(self.head.load(Ordering::Relaxed))
         TaskNodePtr(self.head.load(Ordering::Acquire))
-
     }
 
     #[inline(always)]
@@ -260,22 +261,42 @@ impl<T> LFShardedRingBuf<T> {
             ShardPolicyKind::CFT => {
                 // What CFT relies on for its starting index is what's written
                 // to this specific task's TaskNodePtr by the assigner task
-                let task_node = unsafe { &*get_task_node().0 };
+                let task_node = TaskNodePtr(get_task_node().load(Ordering::Relaxed));
                 match acquire {
                     Acquire::Enqueue => {
-                        while !task_node.is_assigned.load(Ordering::Relaxed) {
+                        // let task_node = TaskNodePtr(get_task_node().load(Ordering::Relaxed));
+                        while unsafe { &*task_node.0 }
+                            .my_pair
+                            .load(Ordering::Relaxed)
+                            .is_null()
+                        {
                             yield_now().await;
                         }
-                        task_node.shard_ind.load(Ordering::Relaxed)
+                        unsafe { &*task_node.0 }.shard_ind.load(Ordering::Acquire)
                     }
                     Acquire::Dequeue => {
-                        while !task_node.is_assigned.load(Ordering::Relaxed) {
+                        // let task_node = TaskNodePtr(get_task_node().load(Ordering::Relaxed));
+                        let my_shard = unsafe { &*task_node.0 }.shard_ind.load(Ordering::Relaxed);
+                        while unsafe { &*task_node.0 }
+                            .my_pair
+                            .load(Ordering::Relaxed)
+                            .is_null()
+                        {
                             if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
                                 return 0;
+                            // } else if my_shard < self.get_num_of_shards()
+                            //     && !self.is_shard_empty(my_shard)
+                            // {
+                            //     break;
+                            // }
+                            } else if my_shard != usize::MAX && !self.is_shard_empty(my_shard)
+                            {
+                                break;
                             }
                             yield_now().await;
                         }
-                        task_node.shard_ind.load(Ordering::Relaxed)
+                        unsafe { &*task_node.0 }.shard_ind.load(Ordering::Acquire)
+                        // unsafe { &*task_node.0 }.shard_ind.load(Ordering::Relaxed)
                     }
                 }
             }
@@ -313,7 +334,17 @@ impl<T> LFShardedRingBuf<T> {
                  */
                 if match acquire {
                     Acquire::Enqueue => !self.is_shard_full(current),
-                    Acquire::Dequeue => !self.is_shard_empty(current),
+                    Acquire::Dequeue => {
+                        if !matches!(get_shard_policy(), ShardPolicyKind::CFT { .. }) {
+                            { !self.is_shard_empty(current) }
+                        } else {
+                            // let task_node = TaskNodePtr(get_task_node().load(Ordering::Relaxed));
+                            // unsafe { &*task_node.0 }.shard_ind.load(Ordering::Acquire)
+                                // < self.get_num_of_shards()
+                                // && { !self.is_shard_empty(current) }
+                                { !self.is_shard_empty(current) }
+                        }
+                    }
                 } {
                     // make sure that the shard index value is set to the
                     // next index it should look at instead of starting
@@ -348,13 +379,19 @@ impl<T> LFShardedRingBuf<T> {
                     yield_now().await;
                 }
             } else {
-                // The dequeuer needs to be updated/reassigned if its pairing
-                // enqueuer was completed before yielding here
-                let task_node = unsafe { &*get_task_node().0 };
-                if matches!(acquire, Acquire::Dequeue) && task_node.is_assigned.load(Ordering::Relaxed) {
-                    current = unsafe { &*get_task_node().0 }
-                        .shard_ind
-                        .load(Ordering::Relaxed);
+                // Update current if we were paired up with someone else potentially
+                let task_node = TaskNodePtr(get_task_node().load(Ordering::Relaxed));
+                if !unsafe { &*task_node.0 }
+                    .my_pair
+                    .load(Ordering::Acquire)
+                    .is_null()
+                // if !unsafe { &*task_node.0 }
+                //     .my_pair
+                //     .load(Ordering::Relaxed)
+                //     .is_null()
+                {
+                    current = unsafe { &*task_node.0 }.shard_ind.load(Ordering::Acquire);
+                    // current = unsafe { &*task_node.0 }.shard_ind.load(Ordering::Relaxed);
                 }
                 yield_now().await;
             }
@@ -868,7 +905,7 @@ impl<T> LFShardedRingBuf<T> {
         let mut count = Vec::new();
 
         for shard in &self.inner_rb {
-            count.push(shard.job_count.load(Ordering::Relaxed)); 
+            count.push(shard.job_count.load(Ordering::Relaxed));
         }
         count
     }
@@ -1401,19 +1438,19 @@ impl<T> LFShardedRingBuf<T> {
 
 // Destructor trait for LFShardedRingBuf just in case it gets dropped and its
 // list of AtomicPtrs are not fully cleaned up yet.
-impl<T> Drop for LFShardedRingBuf<T> {
-    fn drop(&mut self) {
-        let mut current = self.head.load(Ordering::Relaxed);
-        // SAFETY: Once I see null, I know all the nodes have been freed
-        while !current.is_null() {
-            unsafe {
-                let next = (*current).next.load(Ordering::Relaxed);
-                drop(Box::from_raw(current));
-                current = next;
-            }
-        }
-    }
-}
+// impl<T> Drop for LFShardedRingBuf<T> {
+//     fn drop(&mut self) {
+//         let mut current = self.head.load(Ordering::Relaxed);
+//         // SAFETY: Once I see null, I know all the nodes have been freed
+//         while !current.is_null() {
+//             unsafe {
+//                 let next = (*current).next.load(Ordering::Relaxed);
+//                 drop(Box::from_raw(current));
+//                 current = next;
+//             }
+//         }
+//     }
+// }
 
 // Destructor trait created for InnerRingBuffer<T> to clean up
 // memory allocated onto MaybeUninit<T> when LFShardedRingBuf<T>

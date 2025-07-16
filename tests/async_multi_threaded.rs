@@ -384,80 +384,84 @@ use tokio::task::JoinHandle;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cft_policy() {
-    const MAX_ITEMS: usize = 100000;
-    const MAX_SHARDS: usize = 10;
-    const MAX_TASKS: usize = 5;
-    let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+    for i in 0..100 {
+        const MAX_ITEMS: usize = 250000;
+        const MAX_SHARDS: usize = 100;
+        const MAX_TASKS: usize = 100;
+        let rb: Arc<LFShardedRingBuf<usize>> =
+            Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
-    assert!(rb.is_empty());
+        assert!(rb.is_empty());
 
-    let mut deq_threads = Vec::new();
-    let mut enq_threads: Vec<JoinHandle<()>> = Vec::new();
+        let mut deq_threads = Vec::new();
+        let mut enq_threads: Vec<JoinHandle<()>> = Vec::new();
 
-    let assigner = spawn_assigner(rb.clone());
+        let assigner = spawn_assigner(rb.clone());
 
-    // Spawn MAX_TASKS dequeuer tasks
-    for _ in 0..MAX_TASKS {
-        let rb = Arc::clone(&rb);
-        let handler = spawn_buffer_task(
-            ShardPolicy::CFT {
-                role: TaskRole::Dequeue,
-                buffer: rb.clone(),
-            },
-            async move {
-                let rb = rb.clone();
-                let mut counter: usize = 0;
-                loop {
-                    let item = rb.dequeue().await;
-                    match item {
-                        Some(_) => counter += 1,
-                        None => break,
+        // Spawn MAX_TASKS dequeuer tasks
+        for _ in 0..MAX_TASKS {
+            let rb = Arc::clone(&rb);
+            let handler = spawn_buffer_task(
+                ShardPolicy::CFT {
+                    role: TaskRole::Dequeue,
+                    buffer: rb.clone(),
+                },
+                async move {
+                    let rb = rb.clone();
+                    let mut counter: usize = 0;
+                    loop {
+                        let item = rb.dequeue().await;
+                        match item {
+                            Some(_) => counter += 1,
+                            None => break,
+                        }
                     }
-                }
-                counter
-            },
-        );
-        deq_threads.push(handler);
+                    counter
+                },
+            );
+            deq_threads.push(handler);
+        }
+
+        // Spawn MAX_TASKS enqueuer tasks
+        for _ in 0..MAX_TASKS {
+            let rb = Arc::clone(&rb);
+            let enq_handler = spawn_buffer_task(
+                ShardPolicy::CFT {
+                    role: TaskRole::Enqueue,
+                    buffer: rb.clone(),
+                },
+                async move {
+                    let rb = rb.clone();
+                    for _i in 0..2 * MAX_ITEMS {
+                        rb.enqueue(20).await;
+                    }
+                },
+            );
+            enq_threads.push(enq_handler);
+        }
+
+        for enq in enq_threads {
+            enq.await.unwrap();
+        }
+
+        // guarantees that the dequeuer finish remaining jobs in the buffer
+        // before exiting
+        rb.poison();
+
+        let mut items_taken: usize = 0;
+        while let Some(curr_thread) = deq_threads.pop() {
+            items_taken += curr_thread.await.unwrap();
+        }
+
+        terminate_assigner(rb.clone());
+
+        let _ = assigner.await;
+
+        assert!(rb.is_empty());
+
+        assert_eq!(2 * MAX_ITEMS * MAX_TASKS, items_taken);
+        println!("Finished loop {i}");
     }
-
-    // Spawn MAX_TASKS enqueuer tasks
-    for _ in 0..MAX_TASKS {
-        let rb = Arc::clone(&rb);
-        let enq_handler = spawn_buffer_task(
-            ShardPolicy::CFT {
-                role: TaskRole::Enqueue,
-                buffer: rb.clone(),
-            },
-            async move {
-                let rb = rb.clone();
-                for _i in 0..2 * MAX_ITEMS {
-                    rb.enqueue(20).await;
-                }
-            },
-        );
-        enq_threads.push(enq_handler);
-    }
-
-    for enq in enq_threads {
-        enq.await.unwrap();
-    }
-
-    // guarantees that the dequeuer finish remaining jobs in the buffer
-    // before exiting
-    rb.poison();
-
-    let mut items_taken: usize = 0;
-    while let Some(curr_thread) = deq_threads.pop() {
-        items_taken += curr_thread.await.unwrap();
-    }
-
-    terminate_assigner(rb.clone());
-
-    let _ = assigner.await;
-
-    assert!(rb.is_empty());
-
-    assert_eq!(2 * MAX_ITEMS * MAX_TASKS, items_taken);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -699,7 +703,6 @@ async fn test_cft_more_deq_than_enq() {
     assert_eq!(2 * MAX_ITEMS * MAX_TASKS, items_taken);
 }
 
-
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cft_more_deq_items_than_enq() {
     const MAX_ITEMS: usize = 100000;
@@ -725,7 +728,7 @@ async fn test_cft_more_deq_items_than_enq() {
             async move {
                 let rb = rb.clone();
                 let mut counter: usize = 0;
-                for _i in 0..(3 * MAX_ITEMS)/2 {
+                for _i in 0..(3 * MAX_ITEMS) / 2 {
                     let item = rb.dequeue().await;
                     match item {
                         Some(_) => counter += 1,
