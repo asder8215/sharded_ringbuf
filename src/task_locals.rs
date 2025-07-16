@@ -14,7 +14,8 @@ task_local! {
     pub(crate) static SHIFT: Cell<usize>;                         // how much to shift the task's shard index by
     pub(crate) static SHARD_POLICY: Cell<ShardPolicyKind>;        // shard policy for buffer
     pub(crate) static TASK_NODE: Cell<CachePadded<TaskNodePtr>>;  // The enqueuer/dequeuer task has a reference to its node
-    pub(crate) static OPERATION_COUNT: Cell<usize>                // For CFT policy, to ensure fairness the assigner moves the dequeuer/enqueuer to the back of the linked list
+    // pub(crate) static TASK_NODE: Cell<Box<TaskNodePtr>>;  // The enqueuer/dequeuer task has a reference to its node
+
 }
 
 // FIXME: change unwrap_or_else to expect
@@ -55,6 +56,19 @@ pub(crate) fn get_task_node() -> TaskNodePtr {
     })
 }
 
+// #[inline(always)]
+// pub(crate) fn set_task_node(task_ptr: CachePadded<TaskNodePtr>) {
+//     TASK_NODE
+//         .try_with(|ptr| {
+//             ptr.set(task_ptr);
+//         })
+//         .unwrap_or_else(|_| {
+//             panic!(
+//                 "TASK_NODE is not initialized. Use `.spawn_buffer_task()` with CFT shard policy."
+//             )
+//         })
+// }
+
 #[inline(always)]
 pub(crate) fn set_task_node(task_ptr: CachePadded<TaskNodePtr>) {
     TASK_NODE
@@ -77,26 +91,6 @@ pub(crate) fn set_task_done() {
                 (*ptr.get().0).is_done.store(true, Ordering::Relaxed) 
                 // (*ptr.get().0).is_done.store(true, Ordering::Release)
             }
-        })
-        .unwrap_or_else(|_| {
-            panic!(
-                "TASK_NODE is not initialized. Use `.spawn_buffer_task()` with CFT shard policy."
-            )
-        })
-}
-
-#[inline(always)]
-pub(crate) fn get_operation_count() -> usize {
-    OPERATION_COUNT.try_with(|cell| cell.get()).unwrap_or_else(|_| {
-        panic!("TASK_NODE is not initialized. Use `.spawn_buffer_task()` with CFT shard policy.")
-    })
-}
-
-#[inline(always)]
-pub(crate) fn set_operation_count(item_num: usize) {
-    OPERATION_COUNT
-        .try_with(|cell| {
-            cell.set( item_num);
         })
         .unwrap_or_else(|_| {
             panic!(

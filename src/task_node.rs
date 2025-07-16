@@ -31,6 +31,7 @@ pub(crate) struct TaskNode {
     pub(crate) is_done: AtomicBool,         // If the task is completed (assigner reads, enq/deq writes)
     pub(crate) is_paired: AtomicBool,       // If the task is paired with deq/enq (assigner writes, enq/deq reads)
     pub(crate) is_assigned: AtomicBool,     // Whether the shard_ind is written or not (assigner writes, enq/deq reads)
+    // pub(crate) is_cancelled: AtomicBool,    // Atomic
     pub(crate) shard_ind: AtomicUsize,      // The shard index that a task will look at (assigner writes, enq/deq reads)
     pub(crate) next: AtomicPtr<TaskNode>,   // The next TaskNode
 }
@@ -48,6 +49,12 @@ impl TaskNode {
     }
 }
 
+impl Drop for TaskNode {
+    fn drop(&mut self) {
+        println!("Hi");
+    }
+}
+
 impl PartialEq for TaskNode {
     fn eq(&self, other: &Self) -> bool {
         ptr::eq(self, other)
@@ -56,7 +63,14 @@ impl PartialEq for TaskNode {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TaskNodePtr(pub *mut TaskNode);
+
+
+
 unsafe impl Send for TaskNodePtr {}
+unsafe impl Sync for TaskNodePtr {}
+
+
+
 
 unsafe impl Send for TaskNode {}
 unsafe impl Sync for TaskNode {}

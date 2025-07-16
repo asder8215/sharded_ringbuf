@@ -1,7 +1,7 @@
 use crate::{
-    shard_lock_guard::ShardLockGuard,
+    guards::ShardLockGuard,
     shard_policies::ShardPolicyKind,
-    task_locals::{get_operation_count, get_shard_ind, get_shard_policy, get_shift, get_task_node, set_operation_count, set_shard_ind},
+    task_locals::{get_shard_ind, get_shard_policy, get_shift, get_task_node, set_shard_ind},
     task_node::{TaskNode, TaskNodePtr},
 };
 use crossbeam_utils::CachePadded;
@@ -136,6 +136,13 @@ impl<T> LFShardedRingBuf<T> {
     /// have access to any of these TaskNodes
     #[inline(always)]
     pub(crate) fn get_head(&self) -> TaskNodePtr {
+        // TaskNodePtr(self.head.load(Ordering::Relaxed))
+        TaskNodePtr(self.head.load(Ordering::Acquire))
+
+    }
+
+    #[inline(always)]
+    pub(crate) fn get_head_relaxed(&self) -> TaskNodePtr {
         TaskNodePtr(self.head.load(Ordering::Relaxed))
     }
 
@@ -262,15 +269,8 @@ impl<T> LFShardedRingBuf<T> {
                         task_node.shard_ind.load(Ordering::Relaxed)
                     }
                     Acquire::Dequeue => {
-                        // if get_operation_count() == self.get_total_capacity() / self.get_num_of_shards() {
-                        //     set_operation_count(0);
-                        //     task_node.is_assigned.store(false, Ordering::Relaxed);
-                        //     task_node.is_paired.store(false, Ordering::Relaxed);
-                        // }
-
                         while !task_node.is_assigned.load(Ordering::Relaxed) {
                             if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
-                                // println!("This occurs.");
                                 return 0;
                             }
                             yield_now().await;
@@ -440,7 +440,6 @@ impl<T> LFShardedRingBuf<T> {
             Ordering::Release,
         );
 
-        // set_operation_count(get_operation_count() + 1);
         self.shard_locks[shard_ind].store(false, Ordering::Release);
     }
 
