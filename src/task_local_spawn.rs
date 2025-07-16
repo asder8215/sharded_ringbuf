@@ -12,7 +12,7 @@ use std::{
     cell::{Cell, UnsafeCell},
     collections::{HashMap, HashSet},
     ptr,
-    sync::{Arc, atomic::Ordering},
+    sync::{atomic::{AtomicPtr, Ordering}, Arc},
     thread::sleep,
     time::Duration,
 };
@@ -270,7 +270,7 @@ where
 pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandle<()> {
     spawn(SHARD_INDEX.scope(Cell::new(Some(0)), async move {
         let buffer_clone = Arc::clone(&buffer);
-        let mut shard_task_map: HashMap<usize, HashSet<TaskNodePtr>> = HashMap::new();
+        // let mut shard_task_map: HashMap<usize, HashSet<TaskNodePtr>> = HashMap::new();
         let mut pairs_map: HashMap<TaskNodePtr, TaskNodePtr> = HashMap::new();
         loop {
             // fetch head to start traversal!
@@ -323,6 +323,12 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                         let _ = unsafe { &*next }.prev.compare_exchange(current.0, prev, Ordering::AcqRel, Ordering::Relaxed);
                     }
 
+                    if let Some(my_pair) = pairs_map.get(&current) {
+                        task_node.my_pair.store(ptr::null_mut(), Ordering::Release);
+                        unsafe{&*my_pair.0}.my_pair.store(ptr::null_mut(), Ordering::Release);
+                        pairs_map.remove(&current);
+                        pairs_map.remove(&my_pair);
+                    }
                     // task_node.my_pair
 
                         // Fix the prev's next pointer to skip this node
@@ -598,6 +604,8 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                     scan_node.my_pair.store(current.0, Ordering::Release);
                                     // this is deq
                                     task_node.my_pair.store(scan.0, Ordering::Release);
+
+                                    
                                 }
                                 TaskRole::Enqueue => {
                                     // this is enq
@@ -607,6 +615,8 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                 }
                             };
                             // current = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
+                            pairs_map.insert(scan, current);
+                            pairs_map.insert(current, scan);
 
                             current = TaskNodePtr(scan_node.next.load(Ordering::Acquire));
                             break;
