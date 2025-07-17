@@ -36,6 +36,7 @@ pub struct LFShardedRingBuf<T> {
     pub(crate) head: AtomicPtr<TaskNode>,
     pub(crate) tail: AtomicPtr<TaskNode>,
     pub(crate) assigner_terminate: AtomicBool,
+    pub(crate) cft_lock: AtomicBool,      // cft policy requires this :( 
 }
 
 // An inner ring buffer to contain the items, enqueue and dequeue index, and job counts for LFShardedRingBuf struct
@@ -129,6 +130,7 @@ impl<T> LFShardedRingBuf<T> {
             head: AtomicPtr::new(ptr::null_mut()),
             tail: AtomicPtr::new(ptr::null_mut()),
             assigner_terminate: AtomicBool::new(false),
+            cft_lock: AtomicBool::new(false)
         }
     }
 
@@ -267,7 +269,7 @@ impl<T> LFShardedRingBuf<T> {
                         // let task_node = TaskNodePtr(get_task_node().load(Ordering::Relaxed));
                         while unsafe { &*task_node.0 }
                             .my_pair
-                            .load(Ordering::Relaxed)
+                            .load(Ordering::Acquire)
                             .is_null()
                         {
                             yield_now().await;

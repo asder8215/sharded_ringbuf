@@ -386,8 +386,8 @@ use tokio::task::JoinHandle;
 async fn test_cft_policy() {
     for i in 0..100 {
         const MAX_ITEMS: usize = 250000;
-        const MAX_SHARDS: usize = 100;
-        const MAX_TASKS: usize = 100;
+        const MAX_SHARDS: usize = 1000;
+        const MAX_TASKS: usize = 1000;
         let rb: Arc<LFShardedRingBuf<usize>> =
             Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 

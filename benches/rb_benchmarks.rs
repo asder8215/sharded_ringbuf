@@ -12,8 +12,8 @@ use tokio::task;
 // comparing the benchmarking to
 // https://github.com/fereidani/rust-channel-benchmarks/tree/main?tab=readme-ov-file
 // const MAX_SHARDS: [usize; 7] = [4, 8, 16, 32, 64, 128, 256];
-const MAX_TASKS: usize = 1000;
-const MAX_SHARDS: usize = 1000;
+const MAX_TASKS: usize = 150;
+const MAX_SHARDS: usize = 150;
 // const MAX_TASKS: usize = 10;
 // const MAX_THREADS: usize = MAX_TASKS;
 const MAX_THREADS: usize = 16;
@@ -383,7 +383,7 @@ fn benchmark_multithreaded(c: &mut Criterion) {
                 let mut total = Duration::ZERO;
                 // let mut counter = 0;
                 for _ in 0..iters {
-                    // println!("Completed iter {counter}!");
+                    println!("Completed iter!");
                     let start = Instant::now();
                     benchmark_lfsrb(s, MAX_SHARDS).await;
                     let end = Instant::now();
