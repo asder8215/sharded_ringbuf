@@ -1,20 +1,16 @@
 use crate::{
-    LFShardedRingBuf, ShardPolicy, TaskRole,
-    shard_policies::ShardPolicyKind,
-    task_locals::{
-        SHARD_INDEX, SHARD_POLICY, SHIFT, TASK_NODE, get_shard_ind, get_task_node, set_shard_ind,
-    },
-    task_node::{TaskNode, TaskNodePtr},
+    shard_policies::ShardPolicyKind, task_locals::{
+        get_shard_ind, get_task_node, set_shard_ind, set_task_node, SHARD_INDEX, SHARD_POLICY, SHIFT, TASK_NODE
+    }, task_node::{TaskNode, TaskNodePtr}, LFShardedRingBuf, ShardPolicy, TaskRole
 };
 use crossbeam_utils::CachePadded;
 use fastrand::usize as frand;
 use std::{
     cell::{Cell, UnsafeCell},
     collections::{HashMap, HashSet},
-    ptr,
+    ptr::{self, null_mut},
     sync::{
-        Arc,
-        atomic::{AtomicPtr, Ordering},
+        atomic::{AtomicPtr, Ordering}, Arc
     },
     thread::sleep,
     time::Duration,
@@ -65,7 +61,7 @@ where
         ShardPolicy::CFT { role, buffer } => {
             spawn(TASK_NODE.scope(
                 // Box::new(UnsafeCell::new(TaskNode::new(role))),
-                Arc::new(TaskNode::new(role)),
+                Cell::new(TaskNodePtr(null_mut())),
                 SHARD_POLICY.scope(
                     Cell::new(ShardPolicyKind::CFT),
                     SHARD_INDEX.scope(
@@ -77,7 +73,10 @@ where
                             // This is wrapped around a TaskNodePtr because *mut TaskNode does not
                             // implement Send and Sync, which the compiler complains across the
                             // yield_now.await loop
-                            let task_node = TaskNodePtr(get_task_node().load(Ordering::Acquire));
+                            let task_node = Box::into_raw(Box::new(TaskNode::new(role)));
+                            set_task_node(task_node);
+                            let task_node = TaskNodePtr(task_node);
+                            // let task_node = TaskNodePtr(get_task_node().load(Ordering::Acquire));
                             // unsafe { (&*task_node.0).myself.store(task_node.0, Ordering::Release) };
                             let null = ptr::null_mut();
 
@@ -136,7 +135,7 @@ where
                                     // loop (and possibly efficient!)
                                     if buffer
                                         .tail
-                                        .compare_exchange_weak(
+                                        .compare_exchange(
                                             tail.0,
                                             task_node.0,
                                             Ordering::AcqRel,
@@ -154,14 +153,19 @@ where
                                         break;
                                     }
 
+                                    
                                     // if we couldn't register the task, let's yield this task for now and try again later
-                                    yield_now().await;
+                                    // yield_now().await;
                                 }
                             }
 
                             buffer.cft_lock.store(false, Ordering::Release);
                             // do whatever the user wants us to do with the future
-                            fut.await
+                            let val = fut.await;
+
+                            unsafe {(&*task_node.0).done.store(true, Ordering::Release)};
+
+                            val
                         }),
                     ),
                 ),
@@ -211,7 +215,7 @@ where
         )),
         ShardPolicy::CFT { role, buffer } => {
             runtime.spawn(TASK_NODE.scope(
-                Arc::new(TaskNode::new(role)),
+                Cell::new(TaskNodePtr(ptr::null_mut())),
                 SHARD_POLICY.scope(
                     Cell::new(ShardPolicyKind::CFT),
                     SHARD_INDEX.scope(
@@ -364,13 +368,17 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
         let mut pairs_map: HashMap<TaskNodePtr, TaskNodePtr> = HashMap::new();
         loop {
             // fetch head to start traversal!
+            if buffer.assigner_terminate.load(Ordering::Relaxed) {
+                return;
+            }
+
+            while !buffer.cft_lock.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok(){
+            };
+
             let mut current = buffer.get_head();
 
             // if user sends a termination signal to the assigner, then it's
             // time to stop working
-            if buffer.assigner_terminate.load(Ordering::Relaxed) {
-                return;
-            }
 
             // let rebound_curr = None;
             // let rebound_scan = None;
@@ -386,6 +394,68 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                 
                 let my_pair = task_node.my_pair.load(Ordering::Acquire);
                 let my_shard = task_node.shard_ind.load(Ordering::Acquire);
+                let done = task_node.done.load(Ordering::Acquire);
+                println!("The task node I started with is {:?}", task_node);
+
+                if done == true {
+
+                    // if my_role == TaskRole::Enqueue && !buffer.is_shard_empty(my_shard) {
+                    if !buffer.is_shard_empty(my_shard) {
+                        // println!("I come here {:?}", task_node);
+                        // println!("{:?}", buffer.get_job_count_total());
+                        if let Some(my_pair) = pairs_map.get(&current).cloned() {
+                            task_node.my_pair.store(ptr::null_mut(), Ordering::Release);
+                            unsafe{&*my_pair.0}.my_pair.store(ptr::null_mut(), Ordering::Release);
+                            pairs_map.remove(&current);
+                            pairs_map.remove(&my_pair);
+                        }
+                    } else {
+
+                        // while buffer.cft_lock.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok(){
+                        // };
+
+                        let prev = task_node.prev.load(Ordering::Acquire);
+                        let next = task_node.next.load(Ordering::Acquire);
+
+
+                        if buffer.head.load(Ordering::Acquire) == current.0 {
+                            let check = buffer.head.compare_exchange(current.0, next, Ordering::AcqRel, Ordering::Relaxed);
+                            // println!("{}", check.is_ok())
+                        }
+
+                        // If we're the tail, try moving tail to prev
+                        if buffer.tail.load(Ordering::Acquire) == current.0 {
+                            let check = buffer.tail.compare_exchange(current.0, prev, Ordering::AcqRel, Ordering::Relaxed);
+                            // println!("{}", check.is_ok())
+                        }
+
+                        // Unlink us from prev -> next
+                        if !prev.is_null() {
+                            let check = unsafe { &*prev }.next.compare_exchange(current.0, next, Ordering::AcqRel, Ordering::Relaxed);
+                            // println!("{}", check.is_ok())
+                        }
+
+                        // Unlink us from next -> prev
+                        if !next.is_null() {
+                            let check = unsafe { &*next }.prev.compare_exchange(current.0, prev, Ordering::AcqRel, Ordering::Relaxed);
+                            // println!("{}", check.is_ok())
+                        }
+
+                        
+                        if let Some(my_pair) = pairs_map.get(&current).cloned() {
+                            task_node.my_pair.store(ptr::null_mut(), Ordering::Release);
+                            unsafe{&*my_pair.0}.my_pair.store(ptr::null_mut(), Ordering::Release);
+                            pairs_map.remove(&current);
+                            pairs_map.remove(&my_pair);
+                        }
+
+                        unsafe {drop(Box::from_raw(current.0))};
+
+                        current = TaskNodePtr(task_node.next.load(Ordering::Acquire));
+                        // buffer.cft_lock.store(false, Ordering::Release);
+                        continue;
+                    }
+                }
 
 
                 // If the dequeuers didn't process the shards inside yet, do not pair them up with someone else yet
@@ -396,7 +466,9 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                 {
                     current = TaskNodePtr(task_node.next.load(Ordering::Acquire));
                     continue;
-                } 
+                }
+
+
                 // else if my_role == TaskRole::Dequeue && my_shard != usize::MAX && buffer.is_shard_empty(my_shard) {
                 //     task_node.my_pair.store(ptr::null_mut(), Ordering::Release);
                 // }
@@ -414,7 +486,7 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                     let mut scan = TaskNodePtr(task_node.next.load(Ordering::Acquire));
 
                     if !scan.0.is_null() {
-                        // println!("The scan node I started with is {:?}", unsafe {&*scan.0});
+                        println!("The scan node I started with is {:?}", unsafe {&*scan.0});
                     }
                     while !scan.0.is_null() {
                         let scan_node = unsafe { &*scan.0 };
@@ -422,6 +494,62 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                         let scan_role = scan_node.role;
                         let scan_pair = scan_node.my_pair.load(Ordering::Acquire);
                         let scan_shard = scan_node.shard_ind.load(Ordering::Acquire);
+                        let scan_done = scan_node.done.load(Ordering::Acquire);
+
+                        if scan_done {
+
+                            // if scan_role == TaskRole::Enqueue && !buffer.is_shard_empty(scan_shard) {
+                            if !buffer.is_shard_empty(scan_shard) {
+                                if let Some(my_pair) = pairs_map.get(&scan).cloned() {
+                                    scan_node.my_pair.store(ptr::null_mut(), Ordering::Release);
+                                    unsafe{&*my_pair.0}.my_pair.store(ptr::null_mut(), Ordering::Release);
+                                    pairs_map.remove(&scan);
+                                    pairs_map.remove(&my_pair);
+                                }
+                            } else {
+                                // while !buffer.cft_lock.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok(){
+                                // };
+
+                                let prev = scan_node.prev.load(Ordering::Acquire);
+                                let next = scan_node.next.load(Ordering::Acquire);
+                                
+                                // let prev_ptr = unsafe { &*prev }.myself.load(Ordering::Acquire);
+                                // let next_ptr = unsafe { &*next }.myself.load(Ordering::Acquire);
+                                if buffer.head.load(Ordering::Acquire) == scan.0 {
+                                    let _ = buffer.head.compare_exchange(scan.0, next, Ordering::AcqRel, Ordering::Relaxed);
+                                }
+
+                                // If we're the tail, try moving tail to prev
+                                if buffer.tail.load(Ordering::Acquire) == scan.0 {
+                                    let _ = buffer.tail.compare_exchange(scan.0, prev, Ordering::AcqRel, Ordering::Relaxed);
+                                }
+
+                                // Unlink us from prev -> next
+                                if !prev.is_null() {
+                                    let _ = unsafe { &*prev }.next.compare_exchange(scan.0, next, Ordering::AcqRel, Ordering::Relaxed);
+                                }
+
+                                // Unlink us from next -> prev
+                                if !next.is_null() {
+                                    let _ = unsafe { &*next }.prev.compare_exchange(scan.0, prev, Ordering::AcqRel, Ordering::Relaxed);
+                                }
+
+
+                                if let Some(my_pair) = pairs_map.get(&scan).cloned() {
+                                    scan_node.my_pair.store(ptr::null_mut(), Ordering::Release);
+                                    unsafe{&*my_pair.0}.my_pair.store(ptr::null_mut(), Ordering::Release);
+                                    pairs_map.remove(&scan);
+                                    pairs_map.remove(&my_pair);
+                                }
+
+                                unsafe {drop(Box::from_raw(scan.0))};
+
+                                // Move forward
+                                scan = TaskNodePtr(scan_node.next.load(Ordering::Acquire)); 
+                                // buffer.cft_lock.store(false, Ordering::Release);
+                                continue;
+                            }
+                        }
 
 
                         // If the dequeuers didn't process the shards inside yet, do not pair them up with someone else yet
@@ -507,6 +635,8 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
             }
             // yield the assigner task and try running through this list another
             // time
+            buffer.cft_lock.store(false, Ordering::Release);
+
             yield_now().await;
         }
     }))

@@ -19,7 +19,7 @@ task_local! {
     pub(crate) static SHARD_POLICY: Cell<ShardPolicyKind>;        // shard policy for buffer
     // TODO: Experiment to see how CachePadding works with this
     // pub(crate) static TASK_NODE: Box<UnsafeCell<TaskNode>>;  // The enqueuer/dequeuer task has a reference to its node
-    pub(crate) static TASK_NODE: Arc<TaskNode>;  // The enqueuer/dequeuer task has a reference to its node
+    pub(crate) static TASK_NODE: Cell<TaskNodePtr>;  // The enqueuer/dequeuer task has a reference to its node
 
 }
 
@@ -57,13 +57,38 @@ pub(crate) fn get_shift() -> usize {
 #[inline(always)]
 pub(crate) fn get_task_node() -> AtomicPtr<TaskNode> {
     TASK_NODE
-        .try_with(|ptr| AtomicPtr::new(ptr.as_ref() as *const _ as *mut TaskNode))
+        .try_with(|ptr| AtomicPtr::new(ptr.get().0))
         .unwrap_or_else(|_| {
             panic!(
                 "TASK_NODE is not initialized. Use `.spawn_buffer_task()` with CFT shard policy."
             )
         })
 }
+
+#[inline(always)]
+pub(crate) fn set_task_node(task_ptr: *mut TaskNode) {
+    TASK_NODE
+        .try_with(|ptr| {
+            ptr.set(TaskNodePtr(task_ptr));
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "TASK_NODE is not initialized. Use `.spawn_buffer_task()` with CFT shard policy."
+            )
+        })
+}
+
+// #[inline(always)]
+// pub(crate) fn get_task_node() -> Box<TaskNode> {
+//     TASK_NODE
+//         .try_with(|ptr| ptr)
+//         .unwrap_or_else(|_| {
+//             panic!(
+//                 "TASK_NODE is not initialized. Use `.spawn_buffer_task()` with CFT shard policy."
+//             )
+//         })
+// }
+
 
 // #[inline(always)]
 // pub(crate) fn set_task_node(task_ptr: CachePadded<TaskNodePtr>) {
