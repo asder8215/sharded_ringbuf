@@ -7,10 +7,7 @@ use crate::{
 use crossbeam_utils::CachePadded;
 use fastrand::usize as frand;
 use std::{
-    fmt::{Debug, Write},
-    mem::MaybeUninit,
-    ptr,
-    sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
+    cmp, fmt::{Debug, Write}, mem::MaybeUninit, ptr, sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering}
 };
 use tokio::task::yield_now;
 
@@ -36,7 +33,7 @@ pub struct LFShardedRingBuf<T> {
     pub(crate) head: AtomicPtr<TaskNode>,
     pub(crate) tail: AtomicPtr<TaskNode>,
     pub(crate) assigner_terminate: AtomicBool,
-    pub(crate) cft_lock: AtomicBool,      // cft policy requires this :( 
+    pub(crate) cft_lock: AtomicBool, // cft policy requires this :(
 }
 
 // An inner ring buffer to contain the items, enqueue and dequeue index, and job counts for LFShardedRingBuf struct
@@ -130,7 +127,7 @@ impl<T> LFShardedRingBuf<T> {
             head: AtomicPtr::new(ptr::null_mut()),
             tail: AtomicPtr::new(ptr::null_mut()),
             assigner_terminate: AtomicBool::new(false),
-            cft_lock: AtomicBool::new(false)
+            cft_lock: AtomicBool::new(false),
         }
     }
 
@@ -258,6 +255,8 @@ impl<T> LFShardedRingBuf<T> {
          * before going around a circle
          */
         let shard_count = self.shard_locks.len();
+        let capacity = self.get_total_capacity();
+        let mut spin = 0;
         let mut current = match get_shard_policy() {
             ShardPolicyKind::RandomAndSweep => frand(0..shard_count),
             ShardPolicyKind::CFT => {
@@ -286,11 +285,6 @@ impl<T> LFShardedRingBuf<T> {
                         {
                             if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
                                 return 0;
-                            // } else if my_shard < self.get_num_of_shards()
-                            //     && !self.is_shard_empty(my_shard)
-                            // {
-                            //     break;
-                            // }
                             } else if my_shard != usize::MAX && !self.is_shard_empty(my_shard)
                             {
                                 break;
@@ -322,7 +316,7 @@ impl<T> LFShardedRingBuf<T> {
             // if poisoned and empty, get out of this loop
             if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
                 break;
-            }
+            } 
 
             if self.acquire_shard(current) {
                 /*
@@ -342,9 +336,9 @@ impl<T> LFShardedRingBuf<T> {
                         } else {
                             // let task_node = TaskNodePtr(get_task_node().load(Ordering::Relaxed));
                             // unsafe { &*task_node.0 }.shard_ind.load(Ordering::Acquire)
-                                // < self.get_num_of_shards()
-                                // && { !self.is_shard_empty(current) }
-                                { !self.is_shard_empty(current) }
+                            // < self.get_num_of_shards()
+                            // && { !self.is_shard_empty(current) }
+                            { !self.is_shard_empty(current) }
                         }
                     }
                 } {
@@ -383,19 +377,16 @@ impl<T> LFShardedRingBuf<T> {
             } else {
                 // Update current if we were paired up with someone else potentially
                 let task_node = TaskNodePtr(get_task_node().load(Ordering::Relaxed));
-                if !unsafe { &*task_node.0 }
+                let is_pair_null = !unsafe { &*task_node.0 }
                     .my_pair
                     .load(Ordering::Acquire)
-                    .is_null()
-                // if !unsafe { &*task_node.0 }
-                //     .my_pair
-                //     .load(Ordering::Relaxed)
-                //     .is_null()
-                {
+                    .is_null();
+
+                if !is_pair_null {
                     current = unsafe { &*task_node.0 }.shard_ind.load(Ordering::Acquire);
-                    // current = unsafe { &*task_node.0 }.shard_ind.load(Ordering::Relaxed);
                 }
                 yield_now().await;
+                // }
             }
         }
         current

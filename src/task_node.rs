@@ -31,7 +31,7 @@ pub(crate) struct TaskNode {
     pub(crate) role: TaskRole,         // A static role of what the Task is
     pub(crate) shard_ind: AtomicUsize, // The shard index that a task will look at (assigner writes, enq/deq reads)
 
-    pub(crate) myself: AtomicPtr<TaskNode>,
+    pub(crate) rotate: AtomicBool,            
     pub(crate) my_pair: AtomicPtr<TaskNode>, // my enqueuer/dequeuer pair
     pub(crate) prev: AtomicPtr<TaskNode>,    // The prev TaskNode
     pub(crate) next: AtomicPtr<TaskNode>,    // The next TaskNode
@@ -43,8 +43,7 @@ impl TaskNode {
             role,
             // usize max acts as a sentinel shard index value
             shard_ind: AtomicUsize::new(usize::MAX),
-
-            myself: AtomicPtr::new(ptr::null_mut()),
+            rotate: AtomicBool::new(false),
             my_pair: AtomicPtr::new(ptr::null_mut()),
             prev: AtomicPtr::new(ptr::null_mut()),
             next: AtomicPtr::new(ptr::null_mut()),
@@ -58,81 +57,59 @@ impl Drop for TaskNode {
         // a reference to this memory location and copy that so we can keep loading
         // and seeing any future updates to prev and next
 
-        self.myself.store(ptr::null_mut(), Ordering::Release);
-
-        // let prev = TaskNodePtr(self.prev.load(Ordering::Acquire));
-        // let next = TaskNodePtr(self.next.load(Ordering::Acquire));
-
-        // // Make sure prev's next is set to our next!
-        // if !prev.0.is_null() {
-        //     let mut prev_next = TaskNodePtr(unsafe { &*prev.0 }.next.load(Ordering::Acquire));
-        //     loop {
-        //         if prev_next.0 != self {
-        //             // Changed possibly or possibly unlinked;
-        //             break;
-        //         }
-
-        //         // if this fails it's possibly that our prev was dropped from the list
-        //         // or the assigner might've moved us to the back of the list
-        //         if unsafe { &*prev.0 }
-        //             .next
-        //             .compare_exchange_weak(prev_next.0, next.0, Ordering::AcqRel, Ordering::Relaxed)
-        //             .is_ok()
-        //         {
-        //             break;
-        //         }
-
-        //         // update what we see for next
-        //         prev_next = TaskNodePtr(unsafe { &*prev.0 }.next.load(Ordering::Acquire));
-        //     }
-        // }
-
-        // // Make sure next's prev is set to our prev's!
-        // if !next.0.is_null() {
-        //     let mut next_prev = TaskNodePtr(unsafe { &*next.0 }.prev.load(Ordering::Acquire));
-
-        //     loop {
-        //         if next_prev.0 != self {
-        //             // Change possibly or possibly unlinked;
-        //             break;
-        //         }
-
-        //         // if this fails it's possibly that our next was dropped from the list
-        //         // or the assigner might've moved us to the back of the list
-        //         if unsafe { &*next.0 }
-        //             .prev
-        //             .compare_exchange_weak(next_prev.0, prev.0, Ordering::AcqRel, Ordering::Relaxed)
-        //             .is_ok()
-        //         {
-        //             break;
-        //         }
-
-        //         // update what we see for next
-        //         next_prev = TaskNodePtr(unsafe { &*next.0 }.prev.load(Ordering::Acquire));
-        //     }
-        // }
-
-        // since we are dropping, we should let our pair know that we aren't pairing up
-        // with them anymore; we null check here just in case our pair dropped us
-        // let pair = TaskNodePtr(self.my_pair.load(Ordering::Acquire));
-        // if !pair.0.is_null() {
-        //     unsafe { &*pair.0 }
-        //         .my_pair
-        //         .store(ptr::null_mut(), Ordering::Release);
-        //     self.my_pair.store(ptr::null_mut(), Ordering::Release);
-        // }
-
-        /* Remember Task Local contains a TaskNode not the AtomicPtr (these guys don't drop themselves)
-         * in the buffer's head list). The issue is that once we drop ourselves
-         * (usually in pair if enqueue and dequeue perform same number of operations)
-         * we can potentially cause a dangling pointer access from whatever we have
-         * (invalid shard index value, invalid role value, invalid pair)
-         * assigning the pointer reference to ourselves as null will let the assigner
-         * know "Hey, I just dropped myself, don't you dare give anyone else what we
-         * have
-         */
         // self.myself.store(ptr::null_mut(), Ordering::Release);
-        // println!("I dropped as {:?}!", self.role);
+
+        let prev = TaskNodePtr(self.prev.load(Ordering::Acquire));
+        let next = TaskNodePtr(self.next.load(Ordering::Acquire));
+
+        // Make sure prev's next is set to our next!
+        if !prev.0.is_null() {
+            let mut prev_next = TaskNodePtr(unsafe { &*prev.0 }.next.load(Ordering::Acquire));
+            loop {
+                if prev_next.0 != self {
+                    // Changed possibly or possibly unlinked;
+                    break;
+                }
+
+                // if this fails it's possibly that our prev was dropped from the list
+                // or the assigner might've moved us to the back of the list
+                if unsafe { &*prev.0 }
+                    .next
+                    .compare_exchange_weak(prev_next.0, next.0, Ordering::AcqRel, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    break;
+                }
+
+                // update what we see for next
+                prev_next = TaskNodePtr(unsafe { &*prev.0 }.next.load(Ordering::Acquire));
+            }
+        }
+
+        // Make sure next's prev is set to our prev's!
+        if !next.0.is_null() {
+            let mut next_prev = TaskNodePtr(unsafe { &*next.0 }.prev.load(Ordering::Acquire));
+
+            loop {
+                if next_prev.0 != self {
+                    // Change possibly or possibly unlinked;
+                    break;
+                }
+
+                // if this fails it's possibly that our next was dropped from the list
+                // or the assigner might've moved us to the back of the list
+                if unsafe { &*next.0 }
+                    .prev
+                    .compare_exchange_weak(next_prev.0, prev.0, Ordering::AcqRel, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    break;
+                }
+
+                // update what we see for next
+                next_prev = TaskNodePtr(unsafe { &*next.0 }.prev.load(Ordering::Acquire));
+            }
+        }
     }
 }
 
