@@ -1,5 +1,5 @@
 use crate::{
-    shard_policies::ShardPolicyKind, task_locals::{
+    guards::{ShardLockGuard, TaskDoneGuard}, shard_policies::ShardPolicyKind, task_locals::{
         get_shard_ind, set_shard_ind, set_task_done, set_task_node, SHARD_INDEX, SHARD_POLICY, SHIFT, TASK_NODE
     }, task_node::{TaskNode, TaskNodePtr}, LFShardedRingBuf, ShardPolicy, TaskRole
 };
@@ -209,8 +209,12 @@ where
 
                             // let guard = TaskNodeGuard::register_task(&buffer, &task_node_ptr).await;
 
+                            // let _guard = ShardLockGuard::acquire(unsafe{&(&*task_node_ptr.0).is_done});
+
+                            let _guard = TaskDoneGuard::acquire(unsafe{&(&*task_node_ptr.0).is_done});
+
                             // do whatever the user wants us to do with the future
-                            let val = fut.await;
+                            fut.await
                             // fut.await
 
                             // drop(guard);
@@ -222,7 +226,6 @@ where
 
                             // println!("Marking task done");
                             // return the future value
-                            val
                         }),
                     ),
                 ),
@@ -254,7 +257,46 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
 
             // assigner can get out of this function once it complete cleaning up
             // the list
-            if buffer.assigner_terminate.load(Ordering::Relaxed) && current.0.is_null() {
+            // if buffer.assigner_terminate.load(Ordering::Relaxed) && current.0.is_null() {
+            //     break;
+            // }
+
+            // assigner cleans up the linked list if set with a termination
+            // signal for reuse on the buffer later.
+            if buffer.assigner_terminate.load(Ordering::Relaxed) {
+                while !current.0.is_null() {
+                        let task_node = unsafe {&*current.0};
+                    // perform cleanup for the completed task
+                        let next = task_node.next.load(Ordering::Relaxed);
+                        // let next = task_node.next.load(Ordering::Acquire);
+                        let free_status = if prev.0.is_null() {
+                            // Because task registration pre-pends at head, must be very careful here
+                            // we use CAS as result to see if we grabbed the head
+                            // buffer.head.compare_exchange(current.0, next, Ordering::AcqRel, Ordering::Relaxed).is_ok()
+                            buffer
+                                .head
+                                .compare_exchange_weak(
+                                    current.0,
+                                    next,
+                                    Ordering::AcqRel,
+                                    Ordering::Relaxed,
+                                )
+                                .is_ok()
+                        } else {
+                            // because task registration happens at the beginning, this is always safe
+                            // to free
+                            // (*prev.0).next.store(next, Ordering::Relaxed);
+                            unsafe{&*prev.0}.next.store(next, Ordering::Release);
+                            true
+                        };
+
+                        // we can successfully free this item
+                        if free_status {
+                            drop(unsafe{Box::from_raw(current.0)});
+                        }
+                        current = TaskNodePtr(next);
+                }
+                
                 break;
             }
 

@@ -51,7 +51,7 @@ impl TaskNode {
 
 impl Drop for TaskNode {
     fn drop(&mut self) {
-        println!("Hi");
+        // println!("Hi");
     }
 }
 
