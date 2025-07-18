@@ -573,13 +573,13 @@ where
 /// use only {# of infinite looping dequeuers} shards.
 pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandle<()> {
     spawn(SHARD_INDEX.scope(Cell::new(Some(0)), async move {
-        let buffer_clone = Arc::clone(&buffer);
+        // let buffer_clone = Arc::clone(&buffer);
         let mut shard_task_map: HashMap<usize, HashSet<TaskNodePtr>> = HashMap::new();
         let mut pairs_map: HashMap<TaskNodePtr, TaskNodePtr> = HashMap::new();
         loop {
             let mut prev = TaskNodePtr(ptr::null_mut());
             // let mut current = buffer_clone.get_head();
-            let mut current = buffer_clone.get_head_relaxed();
+            let mut current = buffer.get_head_relaxed();
 
             // assigner can get out of this function once it complete cleaning up
             // the list
