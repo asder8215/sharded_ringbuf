@@ -584,8 +584,9 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
             let mut rebound_scan: Option<TaskNodePtr> = None;
 
             // assigner can get out of this function once it complete cleaning up
-            // the list
+            // the list and resets the termination signal to false
             if buffer.assigner_terminate.load(Ordering::Relaxed) && current.0.is_null() {
+                buffer.assigner_terminate.store(true, Ordering::Relaxed);
                 break;
             }
 
