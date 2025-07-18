@@ -576,80 +576,81 @@ impl<T> LFShardedRingBuf<T> {
         }
     }
 
-    /// Clears the buffer back to an empty state
-    ///
-    /// Note: If you plan to clear the buffer from a single thread or after
-    /// all tasks are completed, then you should use [Self::clear]
-    ///
-    /// Time Complexity: O(s * c_s * s_t) where s is the num of shards,
-    /// c_s is the capacity per shard, and s_t is how long it takes to
-    /// acquire shard(s)
-    ///
-    /// Space complexity: O(1)
-    pub async fn async_clear(&self) {
-        // Acquire all shards
-        // CANCEL SAFETY: When a future is aborted, it puts false back into the lock
-        let mut guards = Vec::new();
-        for shard in 0..self.shard_locks.len() {
-            let guard = ShardLockGuard::acquire(&self.shard_locks[shard]).await;
-            guards.push(guard);
-        }
+    // #[deprecated=(since = "3.1.0", note = "This function is not cancel safe and can cause memory issues. DO NOT USE THIS.")]
+    // /// Clears the buffer back to an empty state
+    // ///
+    // /// Note: If you plan to clear the buffer from a single thread or after
+    // /// all tasks are completed, then you should use [Self::clear]
+    // ///
+    // /// Time Complexity: O(s * c_s * s_t) where s is the num of shards,
+    // /// c_s is the capacity per shard, and s_t is how long it takes to
+    // /// acquire shard(s)
+    // ///
+    // /// Space complexity: O(1)
+    // pub async fn async_clear(&self) {
+    //     // Acquire all shards
+    //     // CANCEL SAFETY: When a future is aborted, it puts false back into the lock
+    //     let mut guards = Vec::new();
+    //     for shard in 0..self.shard_locks.len() {
+    //         let guard = ShardLockGuard::acquire(&self.shard_locks[shard]).await;
+    //         guards.push(guard);
+    //     }
 
-        // reset each shard's inner ring buffer
-        for (shard_ind, _guard) in guards.into_iter().enumerate() {
-            let mut drop_index = self.inner_rb[shard_ind]
-                .dequeue_index
-                .load(Ordering::Acquire);
-            let stop_index = self.inner_rb[shard_ind]
-                .enqueue_index
-                .load(Ordering::Acquire);
-            while drop_index != stop_index {
-                // SAFETY: This will only clear out initialized values that have not
-                // been dequeued.
-                unsafe {
-                    ptr::drop_in_place(
-                        (*self.inner_rb[shard_ind].items[drop_index].load(Ordering::Relaxed))
-                            .as_mut_ptr(),
-                    )
-                }
-                drop_index = (drop_index + 1) % self.inner_rb[shard_ind].items.len();
-            }
-            self.inner_rb[shard_ind]
-                .enqueue_index
-                .store(0, Ordering::Release);
-            self.inner_rb[shard_ind]
-                .dequeue_index
-                .store(0, Ordering::Release);
-            self.inner_rb[shard_ind]
-                .job_count
-                .store(0, Ordering::Release);
-        }
-    }
+    //     // reset each shard's inner ring buffer
+    //     for (shard_ind, _guard) in guards.into_iter().enumerate() {
+    //         let mut drop_index = self.inner_rb[shard_ind]
+    //             .dequeue_index
+    //             .load(Ordering::Acquire);
+    //         let stop_index = self.inner_rb[shard_ind]
+    //             .enqueue_index
+    //             .load(Ordering::Acquire);
+    //         while drop_index != stop_index {
+    //             // SAFETY: This will only clear out initialized values that have not
+    //             // been dequeued.
+    //             unsafe {
+    //                 ptr::drop_in_place(
+    //                     (*self.inner_rb[shard_ind].items[drop_index].load(Ordering::Relaxed))
+    //                         .as_mut_ptr(),
+    //                 )
+    //             }
+    //             drop_index = (drop_index + 1) % self.inner_rb[shard_ind].items.len();
+    //         }
+    //         self.inner_rb[shard_ind]
+    //             .enqueue_index
+    //             .store(0, Ordering::Release);
+    //         self.inner_rb[shard_ind]
+    //             .dequeue_index
+    //             .store(0, Ordering::Release);
+    //         self.inner_rb[shard_ind]
+    //             .job_count
+    //             .store(0, Ordering::Release);
+    //     }
+    // }
 
-    /// Checks if all shards are empty in an async manner
-    ///
-    /// Time Complexity: O(s * s_t) where s is the number of shards
-    /// and s_t is the time it takes to acquire a shard
-    ///
-    /// Space Complexity: O(1)
-    #[inline(always)]
-    pub async fn async_is_empty(&self) -> bool {
-        // Acquire all shards
-        // CANCEL SAFETY: When a future is aborted, it puts false back into the lock
-        let mut guards = Vec::new();
-        for shard in 0..self.shard_locks.len() {
-            let guard = ShardLockGuard::acquire(&self.shard_locks[shard]).await;
-            guards.push(guard);
-        }
+    // /// Checks if all shards are empty in an async manner
+    // ///
+    // /// Time Complexity: O(s * s_t) where s is the number of shards
+    // /// and s_t is the time it takes to acquire a shard
+    // ///
+    // /// Space Complexity: O(1)
+    // #[inline(always)]
+    // pub async fn async_is_empty(&self) -> bool {
+    //     // Acquire all shards
+    //     // CANCEL SAFETY: When a future is aborted, it puts false back into the lock
+    //     let mut guards = Vec::new();
+    //     for shard in 0..self.shard_locks.len() {
+    //         let guard = ShardLockGuard::acquire(&self.shard_locks[shard]).await;
+    //         guards.push(guard);
+    //     }
 
-        for (shard_ind, _guard) in guards.into_iter().enumerate() {
-            if !self.is_shard_empty(shard_ind) {
-                return false;
-            }
-        }
-        // if it got to this point, then indeed it was empty at this point
-        true
-    }
+    //     for (shard_ind, _guard) in guards.into_iter().enumerate() {
+    //         if !self.is_shard_empty(shard_ind) {
+    //             return false;
+    //         }
+    //     }
+    //     // if it got to this point, then indeed it was empty at this point
+    //     true
+    // }
 
     /// Checks if all shards are empty
     ///
@@ -677,18 +678,18 @@ impl<T> LFShardedRingBuf<T> {
         self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) == 0
     }
 
-    /// Checks to see if a specific shard is empty in an async manner
-    ///
-    /// Time Complexity: O(1)
-    ///
-    /// Space Complexity: O(1)
-    #[inline(always)]
-    pub async fn async_is_shard_empty(&self, shard_ind: usize) -> bool {
-        // acquire shard in a cancel safe manner
-        ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
+    // /// Checks to see if a specific shard is empty in an async manner
+    // ///
+    // /// Time Complexity: O(1)
+    // ///
+    // /// Space Complexity: O(1)
+    // #[inline(always)]
+    // pub async fn async_is_shard_empty(&self, shard_ind: usize) -> bool {
+    //     // acquire shard in a cancel safe manner
+    //     ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
 
-        self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) == 0
-    }
+    //     self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) == 0
+    // }
 
     /// Checks if all shards are full
     ///
@@ -707,31 +708,31 @@ impl<T> LFShardedRingBuf<T> {
         true
     }
 
-    /// Checks if all shards are full in an async manner
-    ///
-    /// Time Complexity: O(s * s_t) where s is the number of shards and
-    /// s_t is the time to acquire a shard
-    ///
-    /// Space Complexity: O(1)
-    #[inline(always)]
-    pub async fn async_is_full(&self) -> bool {
-        // Acquire all shards
-        // CANCEL SAFETY: When a future is aborted, it puts false back into the lock
-        let mut guards = Vec::new();
-        for shard in 0..self.shard_locks.len() {
-            let guard = ShardLockGuard::acquire(&self.shard_locks[shard]).await;
-            guards.push(guard);
-        }
+    // /// Checks if all shards are full in an async manner
+    // ///
+    // /// Time Complexity: O(s * s_t) where s is the number of shards and
+    // /// s_t is the time to acquire a shard
+    // ///
+    // /// Space Complexity: O(1)
+    // #[inline(always)]
+    // pub async fn async_is_full(&self) -> bool {
+    //     // Acquire all shards
+    //     // CANCEL SAFETY: When a future is aborted, it puts false back into the lock
+    //     let mut guards = Vec::new();
+    //     for shard in 0..self.shard_locks.len() {
+    //         let guard = ShardLockGuard::acquire(&self.shard_locks[shard]).await;
+    //         guards.push(guard);
+    //     }
 
-        for (shard_ind, _guard) in guards.into_iter().enumerate() {
-            if !self.is_shard_full(shard_ind) {
-                return false;
-            }
-        }
+    //     for (shard_ind, _guard) in guards.into_iter().enumerate() {
+    //         if !self.is_shard_full(shard_ind) {
+    //             return false;
+    //         }
+    //     }
 
-        // if it got to this point, all the shards were indeed full
-        true
-    }
+    //     // if it got to this point, all the shards were indeed full
+    //     true
+    // }
 
     /// Checks to see if a specific shard is full
     ///
@@ -744,19 +745,19 @@ impl<T> LFShardedRingBuf<T> {
             == self.inner_rb[shard_ind].items.len()
     }
 
-    /// Checks to see if a specific shard is full in an async manner
-    ///
-    /// Time Complexity: O(s_t) where s_t is the time to acquire a shard
-    ///
-    /// Space Complexity: O(1)
-    #[inline(always)]
-    pub async fn async_is_shard_full(&self, shard_ind: usize) -> bool {
-        // acquire shard in a cancel safe manner
-        ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
+    // /// Checks to see if a specific shard is full in an async manner
+    // ///
+    // /// Time Complexity: O(s_t) where s_t is the time to acquire a shard
+    // ///
+    // /// Space Complexity: O(1)
+    // #[inline(always)]
+    // pub async fn async_is_shard_full(&self, shard_ind: usize) -> bool {
+    //     // acquire shard in a cancel safe manner
+    //     ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
 
-        self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed)
-            == self.inner_rb[shard_ind].items.len()
-    }
+    //     self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed)
+    //         == self.inner_rb[shard_ind].items.len()
+    // }
 
     /// Gets the enqueue index within a shard. Returns None if the shard
     /// index is invalid.
@@ -780,27 +781,27 @@ impl<T> LFShardedRingBuf<T> {
         Some(enq_ind)
     }
 
-    /// Get the enqueue index within a shard in an async manner.
-    /// Returns None if the shard index is invalid.
-    ///
-    /// Time Complexity: O(s_t) where s_t is the time to acquire a shard
-    ///
-    /// Space Complexity: O(1)
-    #[inline(always)]
-    pub async fn async_get_enq_ind_at_shard(&self, shard_ind: usize) -> Option<usize> {
-        if shard_ind >= self.shard_locks.len() {
-            return None;
-        }
+    // /// Get the enqueue index within a shard in an async manner.
+    // /// Returns None if the shard index is invalid.
+    // ///
+    // /// Time Complexity: O(s_t) where s_t is the time to acquire a shard
+    // ///
+    // /// Space Complexity: O(1)
+    // #[inline(always)]
+    // pub async fn async_get_enq_ind_at_shard(&self, shard_ind: usize) -> Option<usize> {
+    //     if shard_ind >= self.shard_locks.len() {
+    //         return None;
+    //     }
 
-        // acquire shard in a cancel safe manner
-        ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
+    //     // acquire shard in a cancel safe manner
+    //     ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
 
-        // grab enq val
-        let inner = &self.inner_rb[shard_ind];
-        let enq_ind = inner.enqueue_index.load(Ordering::Relaxed);
+    //     // grab enq val
+    //     let inner = &self.inner_rb[shard_ind];
+    //     let enq_ind = inner.enqueue_index.load(Ordering::Relaxed);
 
-        Some(enq_ind)
-    }
+    //     Some(enq_ind)
+    // }
 
     /// Get the dequeue index within a shard. Returns None if the shard
     /// index is invalid.
@@ -824,27 +825,27 @@ impl<T> LFShardedRingBuf<T> {
         Some(deq_ind)
     }
 
-    /// Get the dequeue index within a shard in an async manner.
-    /// Returns None if the shard index is invalid.
-    ///
-    /// Time Complexity: O(s_t) where s_t is the time to acquire a shard
-    ///
-    /// Space Complexity: O(1)
-    #[inline(always)]
-    pub async fn async_get_deq_ind_at_shard(&self, shard_ind: usize) -> Option<usize> {
-        if shard_ind >= self.shard_locks.len() {
-            return None;
-        }
+    // /// Get the dequeue index within a shard in an async manner.
+    // /// Returns None if the shard index is invalid.
+    // ///
+    // /// Time Complexity: O(s_t) where s_t is the time to acquire a shard
+    // ///
+    // /// Space Complexity: O(1)
+    // #[inline(always)]
+    // pub async fn async_get_deq_ind_at_shard(&self, shard_ind: usize) -> Option<usize> {
+    //     if shard_ind >= self.shard_locks.len() {
+    //         return None;
+    //     }
 
-        // acquire shard in a cancel safe manner
-        ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
+    //     // acquire shard in a cancel safe manner
+    //     ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
 
-        // grab deq ind val
-        let inner = &self.inner_rb[shard_ind];
-        let deq_ind = inner.dequeue_index.load(Ordering::Relaxed);
+    //     // grab deq ind val
+    //     let inner = &self.inner_rb[shard_ind];
+    //     let deq_ind = inner.dequeue_index.load(Ordering::Relaxed);
 
-        Some(deq_ind)
-    }
+    //     Some(deq_ind)
+    // }
 
     /// Gets the total number of jobs within a shard. Returns None if the shard
     /// index is invalid.
@@ -863,6 +864,11 @@ impl<T> LFShardedRingBuf<T> {
         Some(self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed))
     }
 
+    /// Gets the total number of jobs within each shard.
+    /// 
+    /// Time Complexity: O(s) where s is the number of shards
+    /// 
+    /// Space Complexity: O(s)
     #[inline(always)]
     pub fn get_job_count_total(&self) -> Vec<usize> {
         let mut count = Vec::new();
@@ -873,23 +879,23 @@ impl<T> LFShardedRingBuf<T> {
         count
     }
 
-    /// Gets the total number of jobs within a shard in an async manner.
-    /// Returns None if the shard index is invalid.
-    ///
-    /// Time Complexity: O(s_t) where s_t is the time to acquire a shard
-    ///
-    /// Space Complexity: O(1)
-    #[inline(always)]
-    pub async fn async_get_job_count_at_shard(&self, shard_ind: usize) -> Option<usize> {
-        if shard_ind >= self.shard_locks.len() {
-            return None;
-        }
+    // /// Gets the total number of jobs within a shard in an async manner.
+    // /// Returns None if the shard index is invalid.
+    // ///
+    // /// Time Complexity: O(s_t) where s_t is the time to acquire a shard
+    // ///
+    // /// Space Complexity: O(1)
+    // #[inline(always)]
+    // pub async fn async_get_job_count_at_shard(&self, shard_ind: usize) -> Option<usize> {
+    //     if shard_ind >= self.shard_locks.len() {
+    //         return None;
+    //     }
 
-        // acquire shard in a cancel safe manner
-        ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
+    //     // acquire shard in a cancel safe manner
+    //     ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
 
-        Some(self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed))
-    }
+    //     Some(self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed))
+    // }
 
     /// Helper function to see if a given index inside of a shard does
     /// indeed contain a valid item
@@ -950,47 +956,47 @@ impl<T> LFShardedRingBuf<T> {
         }
     }
 
-    /// Returns a clone of an item within the buffer in an async manner or
-    /// None if the shard index/item index is invalid or if there exists
-    /// no item inside that position
-    ///
-    /// The T object inside the ring buffer *must* implement the Clone trait
-    ///
-    /// Time Complexity: O(s_t * T_t)
-    ///
-    /// Space Complexity: O(T_s)
-    ///
-    /// Where O(T_t) and O(T_s) is the time and space complexity required to
-    /// clone the internals of the T object itself and s_t is the time it takes
-    /// to acquire the shard
-    pub async fn async_clone_item_at_shard(&self, item_ind: usize, shard_ind: usize) -> Option<T>
-    where
-        T: Clone,
-    {
-        if shard_ind >= self.shard_locks.len() {
-            return None;
-        }
+    // /// Returns a clone of an item within the buffer in an async manner or
+    // /// None if the shard index/item index is invalid or if there exists
+    // /// no item inside that position
+    // ///
+    // /// The T object inside the ring buffer *must* implement the Clone trait
+    // ///
+    // /// Time Complexity: O(s_t * T_t)
+    // ///
+    // /// Space Complexity: O(T_s)
+    // ///
+    // /// Where O(T_t) and O(T_s) is the time and space complexity required to
+    // /// clone the internals of the T object itself and s_t is the time it takes
+    // /// to acquire the shard
+    // pub async fn async_clone_item_at_shard(&self, item_ind: usize, shard_ind: usize) -> Option<T>
+    // where
+    //     T: Clone,
+    // {
+    //     if shard_ind >= self.shard_locks.len() {
+    //         return None;
+    //     }
 
-        if item_ind >= self.inner_rb[shard_ind].items.len() {
-            return None;
-        }
+    //     if item_ind >= self.inner_rb[shard_ind].items.len() {
+    //         return None;
+    //     }
 
-        // acquire shard in a cancel safe manner
-        ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
+    //     // acquire shard in a cancel safe manner
+    //     ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
 
-        // clone item in shard
-        let inner = &self.inner_rb[shard_ind];
-        // SAFETY: We know for certain there's an item inside the ring buffer if
-        // item index is in [dequeue ind, enqueue ind) + wraparound
-        unsafe {
-            if self.is_item_in_shard(item_ind, shard_ind) {
-                let val_ref = (*inner.items[item_ind].load(Ordering::Relaxed)).assume_init_ref();
-                Some(val_ref.clone())
-            } else {
-                None
-            }
-        }
-    }
+    //     // clone item in shard
+    //     let inner = &self.inner_rb[shard_ind];
+    //     // SAFETY: We know for certain there's an item inside the ring buffer if
+    //     // item index is in [dequeue ind, enqueue ind) + wraparound
+    //     unsafe {
+    //         if self.is_item_in_shard(item_ind, shard_ind) {
+    //             let val_ref = (*inner.items[item_ind].load(Ordering::Relaxed)).assume_init_ref();
+    //             Some(val_ref.clone())
+    //         } else {
+    //             None
+    //         }
+    //     }
+    // }
 
     /// Returns a clone of a specific InnerRingBuffer shard or
     /// None if the shard index is invalid
@@ -1035,51 +1041,51 @@ impl<T> LFShardedRingBuf<T> {
         Some(items)
     }
 
-    /// Returns a clone of a specific InnerRingBuffer shard in an async manner or
-    /// None if the shard index is invalid
-    ///
-    /// The T object inside the ring buffer *must* implement the Clone trait
-    ///
-    /// Time Complexity: O(c_s * s_t * O(T_t))
-    ///
-    /// Space Complexity: O(c_s * O(T_s))
-    ///
-    /// Where c_s is the capacity in a shard O(T_t) and O(T_s) is the time and
-    /// space complexity required to clone the internals of the T object itself,
-    /// and s_t is the time it takes to acquire the shard
-    pub async fn async_clone_items_at_shard(&self, shard_ind: usize) -> Option<Box<[Option<T>]>>
-    where
-        T: Clone,
-    {
-        if shard_ind >= self.shard_locks.len() {
-            return None;
-        }
+    // /// Returns a clone of a specific InnerRingBuffer shard in an async manner or
+    // /// None if the shard index is invalid
+    // ///
+    // /// The T object inside the ring buffer *must* implement the Clone trait
+    // ///
+    // /// Time Complexity: O(c_s * s_t * O(T_t))
+    // ///
+    // /// Space Complexity: O(c_s * O(T_s))
+    // ///
+    // /// Where c_s is the capacity in a shard O(T_t) and O(T_s) is the time and
+    // /// space complexity required to clone the internals of the T object itself,
+    // /// and s_t is the time it takes to acquire the shard
+    // pub async fn async_clone_items_at_shard(&self, shard_ind: usize) -> Option<Box<[Option<T>]>>
+    // where
+    //     T: Clone,
+    // {
+    //     if shard_ind >= self.shard_locks.len() {
+    //         return None;
+    //     }
 
-        // acquire shard in a cancel safe manner
-        ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
+    //     // acquire shard in a cancel safe manner
+    //     ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
 
-        // clone items in shard
-        let inner = &self.inner_rb[shard_ind];
-        let items = {
-            let mut vec = Vec::with_capacity(inner.items.len());
+    //     // clone items in shard
+    //     let inner = &self.inner_rb[shard_ind];
+    //     let items = {
+    //         let mut vec = Vec::with_capacity(inner.items.len());
 
-            // SAFETY: We know for certain there's an item inside the ring buffer if
-            // item index is in [dequeue ind, enqueue ind) + wraparound
-            for i in 0..inner.items.len() {
-                if self.is_item_in_shard(i, shard_ind) {
-                    let val_ref =
-                        unsafe { (*inner.items[i].load(Ordering::Relaxed)).assume_init_ref() };
-                    vec.push(Some(val_ref.clone()))
-                } else {
-                    vec.push(None);
-                }
-            }
+    //         // SAFETY: We know for certain there's an item inside the ring buffer if
+    //         // item index is in [dequeue ind, enqueue ind) + wraparound
+    //         for i in 0..inner.items.len() {
+    //             if self.is_item_in_shard(i, shard_ind) {
+    //                 let val_ref =
+    //                     unsafe { (*inner.items[i].load(Ordering::Relaxed)).assume_init_ref() };
+    //                 vec.push(Some(val_ref.clone()))
+    //             } else {
+    //                 vec.push(None);
+    //             }
+    //         }
 
-            vec.into_boxed_slice()
-        };
+    //         vec.into_boxed_slice()
+    //     };
 
-        Some(items)
-    }
+    //     Some(items)
+    // }
 
     /// Returns a clone of the entire buffer in its current state
     ///
@@ -1126,60 +1132,60 @@ impl<T> LFShardedRingBuf<T> {
         vec.into_boxed_slice()
     }
 
-    /// Returns a clone of the entire buffer in its current state in an async manner
-    ///
-    /// The T object inside the ring buffer *must* implement the Clone trait
-    ///
-    /// Time Complexity: O(s * c_s * s_t * O(T_t))
-    ///
-    /// Space Complexity: O(s * c_s * O(T_s))
-    ///
-    /// Where s is the number of shards, c_s is the capacity in a shard,
-    /// s_t is the take it takes to acquire the shard, and O(T_t) and O(T_s)
-    /// is the time and space complexity required to clone the internals of
-    /// the T object itself
-    pub async fn async_clone_items(&self) -> Box<[Box<[Option<T>]>]>
-    where
-        T: Clone,
-    {
-        // Acquire all shards
-        // CANCEL SAFETY: When a future is aborted, it puts false back into the lock
-        let mut guards = Vec::new();
-        for shard in 0..self.shard_locks.len() {
-            let guard = ShardLockGuard::acquire(&self.shard_locks[shard]).await;
-            guards.push(guard);
-        }
+    // /// Returns a clone of the entire buffer in its current state in an async manner
+    // ///
+    // /// The T object inside the ring buffer *must* implement the Clone trait
+    // ///
+    // /// Time Complexity: O(s * c_s * s_t * O(T_t))
+    // ///
+    // /// Space Complexity: O(s * c_s * O(T_s))
+    // ///
+    // /// Where s is the number of shards, c_s is the capacity in a shard,
+    // /// s_t is the take it takes to acquire the shard, and O(T_t) and O(T_s)
+    // /// is the time and space complexity required to clone the internals of
+    // /// the T object itself
+    // pub async fn async_clone_items(&self) -> Box<[Box<[Option<T>]>]>
+    // where
+    //     T: Clone,
+    // {
+    //     // Acquire all shards
+    //     // CANCEL SAFETY: When a future is aborted, it puts false back into the lock
+    //     let mut guards = Vec::new();
+    //     for shard in 0..self.shard_locks.len() {
+    //         let guard = ShardLockGuard::acquire(&self.shard_locks[shard]).await;
+    //         guards.push(guard);
+    //     }
 
-        let inner = &self.inner_rb;
-        let mut vec = Vec::with_capacity(inner.len());
+    //     let inner = &self.inner_rb;
+    //     let mut vec = Vec::with_capacity(inner.len());
 
-        // Clone items in each shard
-        // Neat thing is that this for loop owns the guards, so it'll drop the
-        // guard for me when it goes to the next iteration
-        for (shard_ind, _guard) in guards.into_iter().enumerate() {
-            let shard = &inner[shard_ind];
-            let items = {
-                let mut shard_vec = Vec::with_capacity(shard.items.len());
+    //     // Clone items in each shard
+    //     // Neat thing is that this for loop owns the guards, so it'll drop the
+    //     // guard for me when it goes to the next iteration
+    //     for (shard_ind, _guard) in guards.into_iter().enumerate() {
+    //         let shard = &inner[shard_ind];
+    //         let items = {
+    //             let mut shard_vec = Vec::with_capacity(shard.items.len());
 
-                // SAFETY: We know for certain there's an item inside the ring buffer if
-                // item index is in [dequeue ind, enqueue ind) + wraparound
-                for i in 0..shard.items.len() {
-                    if self.is_item_in_shard(i, shard_ind) {
-                        let val_ref =
-                            unsafe { (*shard.items[i].load(Ordering::Relaxed)).assume_init_ref() };
-                        shard_vec.push(Some(val_ref.clone()))
-                    } else {
-                        shard_vec.push(None);
-                    }
-                }
+    //             // SAFETY: We know for certain there's an item inside the ring buffer if
+    //             // item index is in [dequeue ind, enqueue ind) + wraparound
+    //             for i in 0..shard.items.len() {
+    //                 if self.is_item_in_shard(i, shard_ind) {
+    //                     let val_ref =
+    //                         unsafe { (*shard.items[i].load(Ordering::Relaxed)).assume_init_ref() };
+    //                     shard_vec.push(Some(val_ref.clone()))
+    //                 } else {
+    //                     shard_vec.push(None);
+    //                 }
+    //             }
 
-                shard_vec.into_boxed_slice()
-            };
-            vec.push(items);
-        }
+    //             shard_vec.into_boxed_slice()
+    //         };
+    //         vec.push(items);
+    //     }
 
-        vec.into_boxed_slice()
-    }
+    //     vec.into_boxed_slice()
+    // }
 
     /// Print out the content inside the a specific shard of the buffer.
     /// If nothing is printed out, that means an invalid shard index was
@@ -1232,58 +1238,58 @@ impl<T> LFShardedRingBuf<T> {
         print!("{print_buffer}");
     }
 
-    /// Print out the content inside the a specific shard of the buffer in an
-    /// async manner. If nothing is printed out, that means an invalid shard
-    /// index was provided
-    ///
-    /// Time Complexity: O(c_s * s_t) c_s is the capacity of the shard
-    /// and s_t is how long it takes to acquire the shard
-    ///
-    /// Space Complexity: O(1)
-    pub async fn async_print_shard(&self, shard_ind: usize)
-    where
-        T: Debug,
-    {
-        if shard_ind >= self.shard_locks.len() {
-            return;
-        }
+    // /// Print out the content inside the a specific shard of the buffer in an
+    // /// async manner. If nothing is printed out, that means an invalid shard
+    // /// index was provided
+    // ///
+    // /// Time Complexity: O(c_s * s_t) c_s is the capacity of the shard
+    // /// and s_t is how long it takes to acquire the shard
+    // ///
+    // /// Space Complexity: O(1)
+    // pub async fn async_print_shard(&self, shard_ind: usize)
+    // where
+    //     T: Debug,
+    // {
+    //     if shard_ind >= self.shard_locks.len() {
+    //         return;
+    //     }
 
-        // Acquire all shards
-        // CANCEL SAFETY: When a future is aborted, it puts false back into the lock
-        // acquire shard in a cancel safe manner
-        ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
+    //     // Acquire all shards
+    //     // CANCEL SAFETY: When a future is aborted, it puts false back into the lock
+    //     // acquire shard in a cancel safe manner
+    //     ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
 
-        let mut print_buffer = String::new();
-        let inner_shard = &self.inner_rb[shard_ind];
+    //     let mut print_buffer = String::new();
+    //     let inner_shard = &self.inner_rb[shard_ind];
 
-        write!(print_buffer, "[").unwrap();
+    //     write!(print_buffer, "[").unwrap();
 
-        // SAFETY: Only print values in between [dequeue_ind, enqueue_ind) + wraparound
-        // otherwise print <uninit> as a placeholder value
-        for i in 0..inner_shard.items.len() {
-            if i == inner_shard.items.len() - 1 {
-                if self.is_item_in_shard(i, shard_ind) {
-                    let val_ref = unsafe {
-                        (*inner_shard.items[i].load(Ordering::Relaxed)).assume_init_ref()
-                    };
-                    write!(print_buffer, "{val_ref:?}").unwrap();
-                } else {
-                    write!(print_buffer, "<uninit>").unwrap();
-                }
-            } else if self.is_item_in_shard(i, shard_ind) {
-                let val_ref =
-                    unsafe { (*inner_shard.items[i].load(Ordering::Relaxed)).assume_init_ref() };
-                write!(print_buffer, "{val_ref:?}, ").unwrap();
-            } else {
-                write!(print_buffer, "<uninit>, ").unwrap();
-            }
-        }
+    //     // SAFETY: Only print values in between [dequeue_ind, enqueue_ind) + wraparound
+    //     // otherwise print <uninit> as a placeholder value
+    //     for i in 0..inner_shard.items.len() {
+    //         if i == inner_shard.items.len() - 1 {
+    //             if self.is_item_in_shard(i, shard_ind) {
+    //                 let val_ref = unsafe {
+    //                     (*inner_shard.items[i].load(Ordering::Relaxed)).assume_init_ref()
+    //                 };
+    //                 write!(print_buffer, "{val_ref:?}").unwrap();
+    //             } else {
+    //                 write!(print_buffer, "<uninit>").unwrap();
+    //             }
+    //         } else if self.is_item_in_shard(i, shard_ind) {
+    //             let val_ref =
+    //                 unsafe { (*inner_shard.items[i].load(Ordering::Relaxed)).assume_init_ref() };
+    //             write!(print_buffer, "{val_ref:?}, ").unwrap();
+    //         } else {
+    //             write!(print_buffer, "<uninit>, ").unwrap();
+    //         }
+    //     }
 
-        write!(print_buffer, "]").unwrap();
+    //     write!(print_buffer, "]").unwrap();
 
-        // Print the buffer!
-        print!("{print_buffer}");
-    }
+    //     // Print the buffer!
+    //     print!("{print_buffer}");
+    // }
 
     /// Print out the content inside the entire buffer
     ///
@@ -1339,64 +1345,64 @@ impl<T> LFShardedRingBuf<T> {
         print!("{print_buffer}");
     }
 
-    /// Print out the content inside the entire buffer in an async manner
-    ///
-    /// Time Complexity: O(s * c_s * s_t) where s is the num of shards,
-    /// c_s is the capacity per shard, and s_t is how long it takes to
-    /// acquire shard(s)
-    ///
-    /// Space Complexity: O(1)
-    pub async fn async_print(&self)
-    where
-        T: Debug,
-    {
-        // Acquire all shards
-        // CANCEL SAFETY: When a future is aborted, it puts false back into the lock
-        let mut guards = Vec::new();
-        for shard in 0..self.shard_locks.len() {
-            let guard = ShardLockGuard::acquire(&self.shard_locks[shard]).await;
-            guards.push(guard);
-        }
+    // /// Print out the content inside the entire buffer in an async manner
+    // ///
+    // /// Time Complexity: O(s * c_s * s_t) where s is the num of shards,
+    // /// c_s is the capacity per shard, and s_t is how long it takes to
+    // /// acquire shard(s)
+    // ///
+    // /// Space Complexity: O(1)
+    // pub async fn async_print(&self)
+    // where
+    //     T: Debug,
+    // {
+    //     // Acquire all shards
+    //     // CANCEL SAFETY: When a future is aborted, it puts false back into the lock
+    //     let mut guards = Vec::new();
+    //     for shard in 0..self.shard_locks.len() {
+    //         let guard = ShardLockGuard::acquire(&self.shard_locks[shard]).await;
+    //         guards.push(guard);
+    //     }
 
-        let mut print_buffer = String::new();
-        write!(print_buffer, "[").unwrap();
+    //     let mut print_buffer = String::new();
+    //     write!(print_buffer, "[").unwrap();
 
-        // Neat thing here is that this for loop owns the guards, so it'll drop the
-        // guard for me when it goes to the next iteration
-        for (shard_ind, _guard) in guards.into_iter().enumerate() {
-            let inner_shard = &self.inner_rb[shard_ind];
-            write!(print_buffer, "[").unwrap();
+    //     // Neat thing here is that this for loop owns the guards, so it'll drop the
+    //     // guard for me when it goes to the next iteration
+    //     for (shard_ind, _guard) in guards.into_iter().enumerate() {
+    //         let inner_shard = &self.inner_rb[shard_ind];
+    //         write!(print_buffer, "[").unwrap();
 
-            // SAFETY: Only print values in between [dequeue_ind, enqueue_ind) + wraparound
-            // otherwise print None as a placeholder value
-            for i in 0..inner_shard.items.len() {
-                if i == inner_shard.items.len() - 1 {
-                    if self.is_item_in_shard(i, shard_ind) {
-                        let val_ref = unsafe {
-                            (*inner_shard.items[i].load(Ordering::Relaxed)).assume_init_ref()
-                        };
-                        write!(print_buffer, "{val_ref:?}").unwrap();
-                    } else {
-                        write!(print_buffer, "<uninit>").unwrap();
-                    }
-                } else if self.is_item_in_shard(i, shard_ind) {
-                    let val_ref = unsafe {
-                        (*inner_shard.items[i].load(Ordering::Relaxed)).assume_init_ref()
-                    };
-                    write!(print_buffer, "{val_ref:?}, ").unwrap();
-                } else {
-                    write!(print_buffer, "<uninit>, ").unwrap();
-                }
-            }
+    //         // SAFETY: Only print values in between [dequeue_ind, enqueue_ind) + wraparound
+    //         // otherwise print None as a placeholder value
+    //         for i in 0..inner_shard.items.len() {
+    //             if i == inner_shard.items.len() - 1 {
+    //                 if self.is_item_in_shard(i, shard_ind) {
+    //                     let val_ref = unsafe {
+    //                         (*inner_shard.items[i].load(Ordering::Relaxed)).assume_init_ref()
+    //                     };
+    //                     write!(print_buffer, "{val_ref:?}").unwrap();
+    //                 } else {
+    //                     write!(print_buffer, "<uninit>").unwrap();
+    //                 }
+    //             } else if self.is_item_in_shard(i, shard_ind) {
+    //                 let val_ref = unsafe {
+    //                     (*inner_shard.items[i].load(Ordering::Relaxed)).assume_init_ref()
+    //                 };
+    //                 write!(print_buffer, "{val_ref:?}, ").unwrap();
+    //             } else {
+    //                 write!(print_buffer, "<uninit>, ").unwrap();
+    //             }
+    //         }
 
-            write!(print_buffer, "]").unwrap();
-        }
+    //         write!(print_buffer, "]").unwrap();
+    //     }
 
-        write!(print_buffer, "]").unwrap();
+    //     write!(print_buffer, "]").unwrap();
 
-        // Print the buffer!
-        print!("{print_buffer}");
-    }
+    //     // Print the buffer!
+    //     print!("{print_buffer}");
+    // }
 }
 
 // Destructor trait for LFShardedRingBuf just in case it gets dropped and its

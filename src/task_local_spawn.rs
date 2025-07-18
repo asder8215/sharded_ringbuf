@@ -1,5 +1,5 @@
 use crate::{
-    shard_policies::ShardPolicyKind, task_locals::{
+    guards::TaskDoneGuard, shard_policies::ShardPolicyKind, task_locals::{
         get_shard_ind, set_shard_ind, set_task_done, set_task_node, SHARD_INDEX, SHARD_POLICY, SHIFT, TASK_NODE
     }, task_node::{TaskNode, TaskNodePtr}, LFShardedRingBuf, ShardPolicy, TaskRole
 };
@@ -106,13 +106,9 @@ where
                                 }
                             }
 
-                            // let _ = TaskNodeGuard::register_task(&buffer, &task_node_ptr);
-
                             // do whatever the user wants us to do with the future
                             let val = fut.await;
-
-
-                            // println!("I am done as {:?}", role);
+                            
                             // mark that the task is done once the future is over
                             set_task_done();
 
@@ -207,20 +203,12 @@ where
                                 }
                             }
 
-                            // let guard = TaskNodeGuard::register_task(&buffer, &task_node_ptr).await;
-
                             // do whatever the user wants us to do with the future
                             let val = fut.await;
-                            // fut.await
-
-                            // drop(guard);
-
-                            // println!("Marking task done");
 
                             // mark that the task is done once the future is over
-                            // set_task_done();
+                            set_task_done();
 
-                            // println!("Marking task done");
                             // return the future value
                             val
                         }),
