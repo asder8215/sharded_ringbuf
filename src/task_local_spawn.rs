@@ -1,28 +1,99 @@
 use crate::{
-    guards::TaskDoneGuard, shard_policies::ShardPolicyKind, task_locals::{
-        get_shard_ind, set_shard_ind, set_task_done, set_task_node, SHARD_INDEX, SHARD_POLICY, SHIFT, TASK_NODE
-    }, task_node::{TaskNode, TaskNodePtr}, LFShardedRingBuf, ShardPolicy, TaskRole
+    LFShardedRingBuf, ShardPolicy, TaskRole,
+    shard_policies::ShardPolicyKind,
+    task_locals::{
+        SHARD_INDEX, SHARD_POLICY, SHIFT, TASK_NODE, get_shard_ind, set_shard_ind, set_task_done,
+        set_task_node,
+    },
+    task_node::{TaskNode, TaskNodePtr},
 };
 use crossbeam_utils::CachePadded;
-use std::{
-    cell::Cell, collections::{HashMap, HashSet}, ptr, sync::{atomic::Ordering, Arc}, thread::sleep, time::Duration
-};
 use fastrand::usize as frand;
+use std::{
+    cell::Cell,
+    collections::{HashMap, HashSet},
+    ptr,
+    sync::{Arc, atomic::Ordering},
+    thread::sleep,
+    time::Duration,
+};
 use tokio::{
     runtime::Runtime,
     task::{JoinHandle, spawn, yield_now},
 };
 
-/// Spawns a Tokio task using the current Tokio runtime context for the purpose
-/// of using it with LFShardedRingBuf
+/// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime 
+/// context for the purpose of using it with `LFShardedRingBuf<T>`.
 ///
 /// This function or [rt_spawn_buffer_task] *must* be used in order to
-/// enqueue or dequeue items onto LFShardedRingBuf
-pub fn spawn_buffer_task<F, T, R>(policy: ShardPolicy<R>, fut: F) -> JoinHandle<T>
+/// enqueue or dequeue items onto `LFShardedRingBuf<T>` due to task local
+/// variables. Using this function otherwise just spawns a regular Tokio task.
+/// 
+/// Here's an example of how you would use it with `LFShardedRingBuf<T>`:
+/// ```rust
+/// let CAPACITY: usize = 1024;
+/// let SHARDS: usize = 4;
+/// let ITEM_PER_TASK = 1000;
+/// let MAX_TASK = 4;
+/// 
+/// let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(CAPACITY, SHARDS));
+///
+/// let mut deq_threads = Vec::with_capacity(MAX_TASKS);
+/// let mut enq_threads = Vec::with_capacity(MAX_TASKS);
+///
+/// // spawn enq tasks with shift by policy
+/// for _ in 0..MAX_TASKS {
+///     let rb = Arc::clone(&rb);
+///     let handler: tokio::task::JoinHandle<()> = spawn_buffer_task(
+///         ShardPolicy::ShiftBy {
+///             initial_index: None,
+///             shift: MAX_TASKS,
+///         },
+///         async move {
+///             for i in 0..ITEM_PER_TASK {
+///                 rb.enqueue(i).await;
+///             }
+///         },
+///     );
+///     enq_threads.push(handler);
+/// }
+///
+/// // spawn deq tasks with shift by policy
+/// for _ in 0..MAX_TASKS {
+///     let rb = Arc::clone(&rb);
+///     let handler: tokio::task::JoinHandle<usize> = spawn_buffer_task(
+///         ShardPolicy::ShiftBy {
+///             initial_index: None,
+///             shift: MAX_TASKS,
+///         },
+///         async move {
+///             let mut counter: usize = 0;
+///             for _i in 0..ITEM_PER_TASK {
+///                 let item = rb.dequeue().await;
+///                 match item {
+///                     Some(_) => counter += 1,
+///                     None => break,
+///                 }
+///             }
+///             counter
+///         },
+///     );
+///     deq_threads.push(handler);
+/// }
+///
+/// // Wait for enqueuers
+/// for enq in enq_threads {
+///     enq.await.unwrap();
+/// }
+/// // Wait for dequeuers
+/// for deq in deq_threads {
+///     deq.await.unwrap();
+/// }
+/// ```
+pub fn spawn_buffer_task<F, T>(policy: ShardPolicy, fut: F) -> JoinHandle<T>
 where
     F: std::future::Future<Output = T> + Send + 'static,
     T: Send + 'static,
-    R: Send + 'static,
 {
     match policy {
         ShardPolicy::Sweep { initial_index } => spawn(SHIFT.scope(
@@ -49,89 +120,87 @@ where
                 SHARD_INDEX.scope(Cell::new(initial_index), fut),
             ),
         )),
-        // will need to refactor this in the future so users don't have the responsibility
-        // of giving me the right buffer and role
-        ShardPolicy::CFT { role, buffer } => {
-
-            
-
-            spawn(TASK_NODE.scope(
-                Cell::new(CachePadded::new(TaskNodePtr(ptr::null_mut()))),
-                SHARD_POLICY.scope(
-                    Cell::new(ShardPolicyKind::CFT),
-                    SHARD_INDEX.scope(
-                        Cell::new(None),
-                        SHIFT.scope(Cell::new(0), async move {
-                            let buffer = Arc::clone(&buffer);
-
-                            // Allocate for pointer and set it to the TASK_NODE for internal use in the future
-                            let node = Box::new(TaskNode::new(role));
-                            let task_node_ptr = CachePadded::new(TaskNodePtr(Box::into_raw(node)));
-                            set_task_node(task_node_ptr);
-                            let mut attempt:i32 = 0;
-
-                            // This performs task registration in a thread sleeping loop
-                            // This is inexpensive (just needs one successful compare swap) 
-                            // and helpful in the long run because
-                            // you want your tasks to be registered for the assigner to
-                            // to be able assign a shard to these tasks
-                            loop {
-                                let current = buffer.get_head(); // get head with Relaxed Memory ordering
-                                // The cool thing about this below is that the next ptr for
-                                // the task node ptr depends on that compare exchange for memory
-                                // visibility, so this relaxed ordering is synchronized properly
-                                // by the compare_exchange's AcqRel ordering.
-                                unsafe {
-                                    (*task_node_ptr.0).next.store(current.0, Ordering::Relaxed);
-                                }
-
-                                if buffer
-                                    .head
-                                    .compare_exchange_weak(
-                                        current.0,
-                                        task_node_ptr.0,
-                                        Ordering::AcqRel,
-                                        Ordering::Relaxed,
-                                    )
-                                    .is_ok()
-                                {
-                                    break;
-                                } else {
-                                    let backoff_us = (1u64 << attempt.min(5)).min(100) as usize;
-                                    let jitter = frand(0..=backoff_us) as u64;
-                                    sleep(Duration::from_nanos(jitter));
-                                    attempt = attempt.saturating_add(1); // Avoid overflow
-                                    // yield_now().await;
-
-                                }
-                            }
-
-                            // do whatever the user wants us to do with the future
-                            let val = fut.await;
-                            
-                            // mark that the task is done once the future is over
-                            set_task_done();
-
-                            // return the future value
-                            val
-                        }),
-                    ),
-                ),
-            ))
-        }
     }
 }
 
-/// Spawns a Tokio task with a provided Tokio Runtime for the purpose
-/// of using it with LFShardedRingBuf
+/// Spawns a Tokio task with a provided `ShardPolicy` and Tokio Runtime for the purpose
+/// of using it with `LFShardedRingBuf<T>`.
 ///
 /// This function or [spawn_buffer_task] *must* be used in order to enqueue or
-/// dequeue items onto LFShardedRingBuf
-pub fn rt_spawn_buffer_task<F, T>(
-    runtime: &Runtime,
-    policy: ShardPolicy<T>,
-    fut: F,
-) -> JoinHandle<T>
+/// dequeue items onto `LFShardedRingBuf<T>` due to task local variables. 
+/// Using this function otherwise just spawns a regular Tokio task.
+/// 
+/// Here's an example of how you might use it with `LFShardedRingBuf<T>`.
+/// ```rust
+/// let CAPACITY: usize = 1024;
+/// let SHARDS: usize = 4;
+/// let ITEM_PER_TASK = 1000;
+/// let MAX_TASK = 4;
+/// let MAX_THREADS = 4;
+/// 
+/// let runtime = tokio::runtime::Builder::new_multi_thread()
+///   .enable_all()
+///   .worker_threads(MAX_THREADS)
+///   .build()
+///   .unwrap();
+/// 
+/// let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(CAPACITY, SHARDS));
+///
+/// let mut deq_threads = Vec::with_capacity(MAX_TASKS);
+/// let mut enq_threads = Vec::with_capacity(MAX_TASKS);
+///
+/// // spawn enq tasks with shift by policy
+/// for _ in 0..MAX_TASKS {
+///     let rb = Arc::clone(&rb);
+///     let handler: tokio::task::JoinHandle<()> = rt_spawn_buffer_task(
+///         runtime,
+///         ShardPolicy::ShiftBy {
+///             initial_index: None,
+///             shift: MAX_TASKS,
+///         },
+///         async move {
+///             for i in 0..ITEM_PER_TASK {
+///                 rb.enqueue(i).await;
+///             }
+///         },
+///     );
+///     enq_threads.push(handler);
+/// }
+///
+/// // spawn deq tasks with shift by policy
+/// for _ in 0..MAX_TASKS {
+///     let rb = Arc::clone(&rb);
+///     let handler: tokio::task::JoinHandle<usize> = rt_spawn_buffer_task(
+///         runtime,
+///         ShardPolicy::ShiftBy {
+///             initial_index: None,
+///             shift: MAX_TASKS,
+///         },
+///         async move {
+///             let mut counter: usize = 0;
+///             for _i in 0..ITEM_PER_TASK {
+///                 let item = rb.dequeue().await;
+///                 match item {
+///                     Some(_) => counter += 1,
+///                     None => break,
+///                 }
+///             }
+///             counter
+///         },
+///     );
+///     deq_threads.push(handler);
+/// }
+///
+/// // Wait for enqueuers
+/// for enq in enq_threads {
+///     enq.await.unwrap();
+/// }
+/// // Wait for dequeuers
+/// for deq in deq_threads {
+///     deq.await.unwrap();
+/// }
+/// ```
+pub fn rt_spawn_buffer_task<F, T>(runtime: &Runtime, policy: ShardPolicy, fut: F) -> JoinHandle<T>
 where
     F: std::future::Future<Output = T> + Send + 'static,
     T: Send + 'static,
@@ -161,75 +230,377 @@ where
                 SHARD_INDEX.scope(Cell::new(initial_index), fut),
             ),
         )),
-        ShardPolicy::CFT { role, buffer } => {
-            runtime.spawn(TASK_NODE.scope(
-                Cell::new(CachePadded::new(TaskNodePtr(ptr::null_mut()))),
-                SHARD_POLICY.scope(
-                    Cell::new(ShardPolicyKind::CFT),
-                    SHARD_INDEX.scope(
-                        Cell::new(None),
-                        SHIFT.scope(Cell::new(0), async move {
-                            let buffer = Arc::clone(&buffer);
-
-                            // Allocate for pointer and set it to the TASK_NODE for internal use in the future
-                            let node = Box::new(TaskNode::new(role));
-                            let task_node_ptr = CachePadded::new(TaskNodePtr(Box::into_raw(node)));
-                            set_task_node(task_node_ptr);
-
-                            // This performs task registration in a task yielding loop
-                            loop {
-                                let current = buffer.get_head_relaxed(); // get head with Relaxed Memory ordering
-                                // The cool thing about this below is that the next ptr for
-                                // the task node ptr depends on that compare exchange for memory
-                                // visibility, so this relaxed ordering is synchronized properly
-                                // by the compare_exchange's AcqRel ordering.
-                                unsafe {
-                                    (*task_node_ptr.0).next.store(current.0, Ordering::Relaxed);
-                                }
-
-                                if buffer
-                                    .head
-                                    .compare_exchange(
-                                        current.0,
-                                        task_node_ptr.0,
-                                        Ordering::AcqRel,
-                                        Ordering::Relaxed,
-                                    )
-                                    .is_ok()
-                                {
-                                    break;
-                                } else {
-                                    yield_now().await;
-                                }
-                            }
-
-                            // do whatever the user wants us to do with the future
-                            let val = fut.await;
-
-                            // mark that the task is done once the future is over
-                            set_task_done();
-
-                            // return the future value
-                            val
-                        }),
-                    ),
-                ),
-            ))
-        }
     }
 }
 
+/// ⚠️ **Warning:** This function is **NOT** cancel-safe. 
+/// 
+/// It won't cause a memory leak because the assigner task and LFShardedRingBuf<T> 
+/// will clean up all task nodes on termination or on drop, but it causes stale task nodes
+/// to be left in the task list, which are not marked done and the assigner task is unable
+/// to clean or unpair the opposing enqueuer/dequeuer task which may or may not be cancelled
+/// as well. If cancel-safety is critical to you, use `spawn_with_buffer_task` or 
+/// `rt_spawn_with_buffer_task` and the best following `ShardPolicy`` for your situation.
+/// 
+/// This is spawning with a new policy called CFT, aka Completely Fair Tasks. It uses a
+/// "smart task" called the assigner via `spawn_assigner()` which handles all pinning of 
+/// enqueuer tasks to dequeuer tasks to a shard for you. Task registration to the list is
+/// not done in a lock free manner unfortunately (it uses a spin lock under the hood).
+/// It's meant to be a convenient policy, where if cancel-safety is not important, all
+/// that the users would need to think about is the appropriate number of shards and capacity
+/// per shard.
+/// 
+/// There are certain caveats with this policy:
+/// * The user is responsible for providing the correct `TaskRole` (Enqueuer or Dequeuer)
+/// and utilize the enqueue or dequeue function appropriately from the buffer
+/// * The user is responsible for providing the correct, associated buffer to spawn the
+/// buffer with.
+/// * This policy can't handle more infinite looping enqueuers than infinite loop dequeuers *should*
+/// the number of shards used is greater than the number of infinite looping dequeuers.
+///     * This is because the assigner pins the dequeuer to an enqueuer to a shard together. It will only
+///       re-pin dequeuer once the dequeuer completely empties the shard and it is not paired with
+///       an enqueuer. If you really want to use more infinite looping enqueuers than dequeuers, then
+///       use only {# of infinite looping dequeuers} shards.
+/// 
+/// This function may be refactored in the future to be a part of one of LFShardedRingBuf<T>'s functions
+/// so that the first two caveats can be addressed nicely.
+/// 
+/// Here's an example of how to use this function:
+/// 
+/// ```rust
+/// const MAX_ITEMS:  usize = 100000;
+/// const MAX_SHARDS: usize = 10;
+/// const MAX_TASKS:  usize = 5;
+/// let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+///
+/// let mut deq_threads = Vec::new();
+/// let mut enq_threads: Vec<JoinHandle<()>> = Vec::new();
+///
+/// let assigner = spawn_assigner(rb.clone());
+///
+/// Spawn MAX_TASKS dequeuer tasks
+/// for _ in 0..MAX_TASKS {
+///     let rb = Arc::clone(&rb);
+///     let handler =
+///         spawn_with_cft::<_, usize, usize>(TaskRole::Dequeue, rb.clone(), async move {
+///             let rb = rb.clone();
+///             let mut counter: usize = 0;
+///             loop {
+///                 let item = rb.dequeue().await;
+///                 match item {
+///                     Some(_) => counter += 1,
+///                     None => break,
+///                 }
+///             }
+///             counter
+///         });
+///     deq_threads.push(handler);
+/// }
+///
+/// Spawn MAX_TASKS enqueuer tasks
+/// for _ in 0..MAX_TASKS {
+///     let rb = Arc::clone(&rb);
+///     let enq_handler =
+///         spawn_with_cft::<_, usize, ()>(TaskRole::Enqueue, rb.clone(), async move {
+///             let rb = rb.clone();
+///             for _i in 0..2 * MAX_ITEMS {
+///                 rb.enqueue(20).await;
+///             }
+///         });
+///     enq_threads.push(enq_handler);
+/// }
+///
+/// for enq in enq_threads {
+///     enq.await.unwrap();
+/// }
+///
+/// guarantees that the dequeuer finish remaining jobs in the buffer
+/// before exiting
+/// rb.poison();
+///
+/// let mut items_taken: usize = 0;
+/// while let Some(curr_thread) = deq_threads.pop() {
+///     items_taken += curr_thread.await.unwrap();
+/// }
+///
+/// terminate_assigner(rb.clone());
+///
+/// let _ = assigner.await;
+/// ```
+pub fn spawn_with_cft<F, T, R>(
+    role: TaskRole,
+    buffer: Arc<LFShardedRingBuf<T>>,
+    fut: F,
+) -> JoinHandle<R>
+where
+    F: std::future::Future<Output = R> + Send + 'static,
+    T: Send + 'static,
+    R: Send + 'static,
+{
+    spawn(TASK_NODE.scope(
+        Cell::new(CachePadded::new(TaskNodePtr(ptr::null_mut()))),
+        SHARD_POLICY.scope(
+            Cell::new(ShardPolicyKind::CFT),
+            SHARD_INDEX.scope(
+                Cell::new(None),
+                SHIFT.scope(Cell::new(0), async move {
+                    let buffer = Arc::clone(&buffer);
+
+                    // Allocate for pointer and set it to the TASK_NODE for internal use in the future
+                    let node = Box::new(TaskNode::new(role));
+                    let task_node_ptr = CachePadded::new(TaskNodePtr(Box::into_raw(node)));
+                    set_task_node(task_node_ptr);
+                    let mut attempt: i32 = 0;
+
+                    // This performs task registration in a thread sleeping loop
+                    // This is inexpensive (just needs one successful compare swap)
+                    // and helpful in the long run because
+                    // you want your tasks to be registered for the assigner to
+                    // to be able assign a shard to these tasks
+                    loop {
+                        let current = buffer.get_head(); // get head with Relaxed Memory ordering
+                        // The cool thing about this below is that the next ptr for
+                        // the task node ptr depends on that compare exchange for memory
+                        // visibility, so this relaxed ordering is synchronized properly
+                        // by the compare_exchange's AcqRel ordering.
+                        unsafe {
+                            (*task_node_ptr.0).next.store(current.0, Ordering::Relaxed);
+                        }
+
+                        if buffer
+                            .head
+                            .compare_exchange_weak(
+                                current.0,
+                                task_node_ptr.0,
+                                Ordering::AcqRel,
+                                Ordering::Relaxed,
+                            )
+                            .is_ok()
+                        {
+                            break;
+                        } else {
+                            let backoff_us = (1u64 << attempt.min(5)).min(100) as usize;
+                            let jitter = frand(0..=backoff_us) as u64;
+                            sleep(Duration::from_nanos(jitter));
+                            attempt = attempt.saturating_add(1); // Avoid overflow
+                        }
+                    }
+
+                    // do whatever the user wants us to do with the future
+                    let val = fut.await;
+
+                    // mark that the task is done once the future is over
+                    set_task_done();
+
+                    // return the future value
+                    val
+                }),
+            ),
+        ),
+    ))
+}
+
+
+/// ⚠️ **Warning:** This function is **NOT** cancel-safe. The JoinHandle should neither
+/// be aborted or the future provided should have no concern about cancelling.
+/// 
+/// In detail: It won't cause a memory leak because the assigner task and LFShardedRingBuf<T> 
+/// will clean up all task nodes on termination or on drop, but it causes stale task nodes
+/// to be left in the task list, which are not marked done and the assigner task is unable
+/// to clean or unpair the opposing enqueuer/dequeuer task which may or may not be cancelled
+/// as well. If cancel-safety is critical to you, use `spawn_with_buffer_task` or 
+/// `rt_spawn_with_buffer_task` and the best following `ShardPolicy`` for your situation.
+/// 
+/// This is spawning with a user provided runtime with a new policy called CFT, 
+/// aka Completely Fair Tasks. It uses a "smart task" called the assigner via 
+/// `spawn_assigner()` which handles all pinning of enqueuer tasks to dequeuer tasks 
+/// to a shard for you. Task registration to the list is not done in a lock free manner 
+/// unfortunately (it uses a spin lock under the hood). It's meant to be a convenient policy, 
+/// where if cancel-safety is not important, all that the users would need to think about 
+/// is the appropriate number of shards and capacity per shard.
+/// 
+/// There are certain caveats with this policy:
+/// * The user is responsible for providing the correct `TaskRole` (Enqueuer or Dequeuer)
+/// and utilize the enqueue or dequeue function appropriately from the buffer
+/// * The user is responsible for providing the correct, associated buffer to spawn the
+/// buffer with.
+/// * This policy can't handle more infinite looping enqueuers than infinite loop dequeuers *should*
+/// the number of shards used is greater than the number of infinite looping dequeuers.
+///     * This is because the assigner pins the dequeuer to an enqueuer to a shard together. It will only
+///       re-pin dequeuer once the dequeuer completely empties the shard and it is not paired with
+///       an enqueuer. If you really want to use more infinite looping enqueuers than dequeuers, then
+///       use only {# of infinite looping dequeuers} shards.
+/// 
+/// This function may be refactored in the future to be a part of one of LFShardedRingBuf<T>'s functions
+/// so that the first two caveats can be addressed nicely.
+/// 
+/// Here's an example of how to use this function:
+/// ```rust
+/// const MAX_ITEMS:   usize = 100000;
+/// const MAX_SHARDS:  usize = 10;
+/// const MAX_TASKS:   usize = 5;
+/// const MAX_THREADS: usize = 5;
+/// 
+/// let runtime = tokio::runtime::Builder::new_multi_thread()
+///   .enable_all()
+///   .worker_threads(MAX_THREADS)
+///   .build()
+///   .unwrap();
+/// 
+/// let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+///
+/// let mut deq_threads = Vec::new();
+/// let mut enq_threads: Vec<JoinHandle<()>> = Vec::new();
+///
+/// let assigner = spawn_assigner(rb.clone());
+///
+/// Spawn MAX_TASKS dequeuer tasks
+/// for _ in 0..MAX_TASKS {
+///     let rb = Arc::clone(&rb);
+///     let handler =
+///         rt_spawn_with_cft::<_, usize, usize>(runtime, TaskRole::Dequeue, rb.clone(), async move {
+///             let rb = rb.clone();
+///             let mut counter: usize = 0;
+///             loop {
+///                 let item = rb.dequeue().await;
+///                 match item {
+///                     Some(_) => counter += 1,
+///                     None => break,
+///                 }
+///             }
+///             counter
+///         });
+///     deq_threads.push(handler);
+/// }
+///
+/// Spawn MAX_TASKS enqueuer tasks
+/// for _ in 0..MAX_TASKS {
+///     let rb = Arc::clone(&rb);
+///     let enq_handler =
+///         rt_spawn_with_cft::<_, usize, ()>(runtime, TaskRole::Enqueue, rb.clone(), async move {
+///             let rb = rb.clone();
+///             for _i in 0..2 * MAX_ITEMS {
+///                 rb.enqueue(20).await;
+///             }
+///         });
+///     enq_threads.push(enq_handler);
+/// }
+///
+/// for enq in enq_threads {
+///     enq.await.unwrap();
+/// }
+///
+/// guarantees that the dequeuer finish remaining jobs in the buffer
+/// before exiting
+/// rb.poison();
+///
+/// let mut items_taken: usize = 0;
+/// while let Some(curr_thread) = deq_threads.pop() {
+///     items_taken += curr_thread.await.unwrap();
+/// }
+///
+/// terminate_assigner(rb.clone());
+///
+/// let _ = assigner.await;
+/// ```
+pub fn rt_spawn_with_cft<F, T, R>(
+    rt: Runtime,
+    role: TaskRole,
+    buffer: Arc<LFShardedRingBuf<T>>,
+    fut: F,
+) -> JoinHandle<R>
+where
+    F: std::future::Future<Output = R> + Send + 'static,
+    T: Send + 'static,
+    R: Send + 'static,
+{
+    rt.spawn(TASK_NODE.scope(
+        Cell::new(CachePadded::new(TaskNodePtr(ptr::null_mut()))),
+        SHARD_POLICY.scope(
+            Cell::new(ShardPolicyKind::CFT),
+            SHARD_INDEX.scope(
+                Cell::new(None),
+                SHIFT.scope(Cell::new(0), async move {
+                    let buffer = Arc::clone(&buffer);
+
+                    // Allocate for pointer and set it to the TASK_NODE for internal use in the future
+                    let node = Box::new(TaskNode::new(role));
+                    let task_node_ptr = CachePadded::new(TaskNodePtr(Box::into_raw(node)));
+                    set_task_node(task_node_ptr);
+                    let mut attempt: i32 = 0;
+
+                    // This performs task registration in a thread sleeping loop
+                    // This is inexpensive (just needs one successful compare swap)
+                    // and helpful in the long run because
+                    // you want your tasks to be registered for the assigner to
+                    // to be able assign a shard to these tasks
+                    loop {
+                        let current = buffer.get_head(); // get head with Relaxed Memory ordering
+                        // The cool thing about this below is that the next ptr for
+                        // the task node ptr depends on that compare exchange for memory
+                        // visibility, so this relaxed ordering is synchronized properly
+                        // by the compare_exchange's AcqRel ordering.
+                        unsafe {
+                            (*task_node_ptr.0).next.store(current.0, Ordering::Relaxed);
+                        }
+
+                        if buffer
+                            .head
+                            .compare_exchange_weak(
+                                current.0,
+                                task_node_ptr.0,
+                                Ordering::AcqRel,
+                                Ordering::Relaxed,
+                            )
+                            .is_ok()
+                        {
+                            break;
+                        } else {
+                            let backoff_us = (1u64 << attempt.min(5)).min(100) as usize;
+                            let jitter = frand(0..=backoff_us) as u64;
+                            sleep(Duration::from_nanos(jitter));
+                            attempt = attempt.saturating_add(1); // Avoid overflow
+                        }
+                    }
+
+                    // do whatever the user wants us to do with the future
+                    let val = fut.await;
+
+                    // mark that the task is done once the future is over
+                    set_task_done();
+
+                    // return the future value
+                    val
+                }),
+            ),
+        ),
+    ))
+}
+
+/// ⚠️ **Warning:** This function is **NOT** cancel-safe.
+/// What I mean by cancel-safety is that the returned JoinHandle should not be
+/// aborted by any means. See below on note for graceful termination.
+/// 
 /// This is your helpful assigner task that handles assigning enqueuer tasks to dequeuer
-/// and vice versa in an optimal way. 
-/// 
-/// To use CTF Shard Policy, you must spawn the assigner task first. 
-/// 
-/// To terminate the assigner, use [terminate_assigner()] and then you can await
+/// and vice versa in an optimal way.
+///
+/// To use CTF Shard Policy, you must spawn the assigner task first.
+///
+/// To terminate the assigner, use `terminate_assigner()`` and then you can await
 /// on the assigner. The assigner also handles memory clean up of allocated enqueuer and
-/// dequeuer task node pointers to the buffer.
-/// 
+/// dequeuer task node pointers to the buffer. Do NOT call abort() on the assigner.
+///
 /// It is the responsibility of the user to provide the correct buffer that tasks are
 /// spawning into and that the assigner task should work with.
+///
+/// Moreover, there are certain caveats to using this assigner task:
+/// * It can't handle more infinite looping enqueuers than infinite loop dequeuers should
+/// the number of shards used is greater than the number of infinite looping dequeuers.
+///
+/// This is because the assigner pins the dequeuer to an enqueuer to a shard together. It will only
+/// re-pin dequeuer once the dequeuer completely empties the shard and it is not paired with
+/// an enqueuer. If you really want to use more infinite looping enqueuers than dequeuers, then
+/// use only {# of infinite looping dequeuers} shards.
 pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandle<()> {
     spawn(SHARD_INDEX.scope(Cell::new(Some(0)), async move {
         let buffer_clone = Arc::clone(&buffer);
@@ -256,14 +627,11 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                     let role = task_node.role;
 
                     let shard_ind = &task_node.shard_ind.load(Ordering::Relaxed);
-                    let is_shard_empty = buffer.is_shard_empty(task_node.shard_ind.load(Ordering::Relaxed));
+                    let is_shard_empty =
+                        buffer.is_shard_empty(task_node.shard_ind.load(Ordering::Relaxed));
 
-                    let pairs = shard_task_map
-                            .get_mut(shard_ind);
+                    let pairs = shard_task_map.get_mut(shard_ind);
 
-                    // println!("I'm currently looking at {:?}", task_node);
-                    // println!("My pointer is {:?}", current);
-                    // println!("How many items are in buffer: {:?}", buffer.get_job_count_total());
                     // in the case that the enqueuer task is done and the shard its at is
                     // not empty, that means that a dequeuer task has not completed its
                     if is_done && is_shard_empty && role == TaskRole::Enqueue {
@@ -277,11 +645,6 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                         // and then there's another enqueuer task that puts up 10 items
                         // exists on another shard but isn't paired yet the pairing dequeuer task
                         // will never be done
-
-                        // this is guaranteed to contain a hashset because something was paired at this point
-                        // task_node and current should be the same thing
-                        // let pairs = pairs.unwrap();
-
 
                         // We remove done pairs from the Hashmap/Hashset together
                         // If done task notices a None in the map, that means its
@@ -300,8 +663,8 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                         .iter()
                                         .find(|ptr| {
                                             (*ptr.0).role == TaskRole::Enqueue
-                                                && (*ptr.0).is_done.load(Ordering::Relaxed)
-                                                    == false  && !(*ptr.0).is_paired.load(Ordering::Relaxed)
+                                                && (*ptr.0).is_done.load(Ordering::Relaxed) == false
+                                                && !(*ptr.0).is_paired.load(Ordering::Relaxed)
                                         })
                                         .is_some()
                                     {
@@ -321,11 +684,9 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
 
                         // perform cleanup for the completed task
                         let next = task_node.next.load(Ordering::Relaxed);
-                        // let next = task_node.next.load(Ordering::Acquire);
                         let free_status = if prev.0.is_null() {
                             // Because task registration pre-pends at head, must be very careful here
                             // we use CAS as result to see if we grabbed the head
-                            // buffer.head.compare_exchange(current.0, next, Ordering::AcqRel, Ordering::Relaxed).is_ok()
                             buffer
                                 .head
                                 .compare_exchange_weak(
@@ -338,7 +699,6 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                         } else {
                             // because task registration happens at the beginning, this is always safe
                             // to free
-                            // (*prev.0).next.store(next, Ordering::Relaxed);
                             (*prev.0).next.store(next, Ordering::Release);
                             true
                         };
@@ -361,10 +721,6 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                         // exists on another shard but isn't paired yet the pairing dequeuer task
                         // will never be done
 
-                        // this is guaranteed to contain a hashset because something was paired at this point
-                        // task_node and current should be the same thing
-                        // let pairs = pairs.unwrap();
-                        
                         // We remove done pairs from the Hashmap/Hashset together
                         // If done task notices a None in the map, that means its
                         // partner has already removed them in the map already
@@ -438,8 +794,8 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                 .iter()
                                 .find(|ptr| {
                                     (*ptr.0).role == TaskRole::Enqueue
-                                        && (*ptr.0).is_done.load(Ordering::Relaxed) == false &&
-                                        !(*ptr.0).is_paired.load(Ordering::Relaxed)
+                                        && (*ptr.0).is_done.load(Ordering::Relaxed) == false
+                                        && !(*ptr.0).is_paired.load(Ordering::Relaxed)
                                 })
                                 .is_none()
                         {
@@ -467,22 +823,10 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                         let shard_ind = &scan_node.shard_ind.load(Ordering::Relaxed);
                         let is_shard_empty = buffer.is_shard_empty(*shard_ind);
 
-                        let pairs = shard_task_map
-                                .get_mut(shard_ind);
+                        let pairs = shard_task_map.get_mut(shard_ind);
 
                         // scanner can also try to clean up as well and free
                         if scan_done && is_shard_empty && role == TaskRole::Enqueue {
-                            
-                            // let pairs = pairs
-                            //     .unwrap();
-
-                            // We remove done pairs from the Hashmap/Hashset together
-                            // If done task notices a None in the map, that means its
-                            // partner has already removed them in the map already
-                            // Sidenote:
-                            // Cloning the Option doesn't mean cloning the whole TaskNode internals
-                            // It's actually cloning the memory location to the TaskNode
-                            // Super fast!
                             if let Some(pairs) = pairs {
                                 if let Some(pair) = pairs_map.get(&scan).cloned() {
                                     if !(*pair.0).is_done.load(Ordering::Relaxed) {
@@ -504,9 +848,7 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                             (*pair.0).is_paired.store(false, Ordering::Relaxed);
                                         } else {
                                             (*pair.0).is_paired.store(false, Ordering::Relaxed);
-                                            (*pair.0)
-                                                .is_assigned
-                                                .store(false, Ordering::Relaxed);
+                                            (*pair.0).is_assigned.store(false, Ordering::Relaxed);
                                         }
                                     }
                                     pairs_map.remove(&pair);
@@ -515,10 +857,7 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                     pairs.remove(&scan);
                                 }
                             }
-
                             let next = scan_node.next.load(Ordering::Relaxed);
-                            // let next = scan_node.next.load(Ordering::Acquire);
-
                             let free_status = if scan_prev.0.is_null() {
                                 // Because task registration pre-pends at head, must be very careful here
                                 // we use CAS as result to see if we grabbed the head
@@ -546,9 +885,6 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                             scan = TaskNodePtr(next);
                             continue;
                         } else if scan_done && scan_role == TaskRole::Dequeue {
-                            // let pairs = pairs
-                            //     .unwrap();
-
                             // We remove done pairs from the Hashmap/Hashset together
                             // If done task notices a None in the map, that means its
                             // partner has already removed them in the map already
@@ -566,19 +902,27 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                                 // offer to work on dequeuing that enqueuer items, so just unpair but not reassign
                                                 // otherwise, I need reassignment!
                                                 if !is_shard_empty {
-                                                    (*pair.0).is_paired.store(false, Ordering::Relaxed);
+                                                    (*pair.0)
+                                                        .is_paired
+                                                        .store(false, Ordering::Relaxed);
                                                 } else if pairs
                                                     .iter()
                                                     .find(|ptr| {
                                                         (*ptr.0).role == TaskRole::Enqueue
-                                                            && (*ptr.0).is_done.load(Ordering::Relaxed)
+                                                            && (*ptr.0)
+                                                                .is_done
+                                                                .load(Ordering::Relaxed)
                                                                 == false
                                                     })
                                                     .is_some()
                                                 {
-                                                    (*pair.0).is_paired.store(false, Ordering::Relaxed);
+                                                    (*pair.0)
+                                                        .is_paired
+                                                        .store(false, Ordering::Relaxed);
                                                 } else {
-                                                    (*pair.0).is_paired.store(false, Ordering::Relaxed);
+                                                    (*pair.0)
+                                                        .is_paired
+                                                        .store(false, Ordering::Relaxed);
                                                     (*pair.0)
                                                         .is_assigned
                                                         .store(false, Ordering::Relaxed);
@@ -658,8 +1002,8 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                     .iter()
                                     .find(|ptr| {
                                         (*ptr.0).role == TaskRole::Enqueue
-                                            && (*ptr.0).is_done.load(Ordering::Relaxed) == false 
-                                            //&& !(*ptr.0).is_paired.load(Ordering::Relaxed)
+                                            && (*ptr.0).is_done.load(Ordering::Relaxed) == false
+                                            && !(*ptr.0).is_paired.load(Ordering::Relaxed)
                                     })
                                     .is_none()
                             {
@@ -680,7 +1024,6 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                             // if deq is assigned, you don't want to override it yet
                             // until it is completely sure that it won't dequeue anymore
                             if !(*deq.0).is_assigned.load(Ordering::Relaxed) {
-
                                 let shard_ind = (*enq.0).shard_ind.load(Ordering::Relaxed);
                                 (*deq.0).shard_ind.store(shard_ind, Ordering::Relaxed);
 
@@ -723,6 +1066,8 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
     }))
 }
 
+/// This is the termination signal to the assigner. Use this instead of cancelling
+/// the assigner for it to terminate gracefully.
 #[inline(always)]
 pub fn terminate_assigner<T>(buffer: Arc<LFShardedRingBuf<T>>)
 where

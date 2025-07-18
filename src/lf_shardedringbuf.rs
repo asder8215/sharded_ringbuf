@@ -1,5 +1,5 @@
 use crate::{
-    guards::ShardLockGuard,
+    // guards::ShardLockGuard, doesn't work :(
     shard_policies::ShardPolicyKind,
     task_locals::{get_shard_ind, get_shard_policy, get_shift, get_task_node, set_shard_ind},
     task_node::{TaskNode, TaskNodePtr},
@@ -138,7 +138,6 @@ impl<T> LFShardedRingBuf<T> {
     pub(crate) fn get_head(&self) -> TaskNodePtr {
         // TaskNodePtr(self.head.load(Ordering::Relaxed))
         TaskNodePtr(self.head.load(Ordering::Acquire))
-
     }
 
     #[inline(always)]
@@ -351,7 +350,9 @@ impl<T> LFShardedRingBuf<T> {
                 // The dequeuer needs to be updated/reassigned if its pairing
                 // enqueuer was completed before yielding here
                 let task_node = unsafe { &*get_task_node().0 };
-                if matches!(acquire, Acquire::Dequeue) && task_node.is_assigned.load(Ordering::Relaxed) {
+                if matches!(acquire, Acquire::Dequeue)
+                    && task_node.is_assigned.load(Ordering::Relaxed)
+                {
                     current = unsafe { &*get_task_node().0 }
                         .shard_ind
                         .load(Ordering::Relaxed);
@@ -865,16 +866,16 @@ impl<T> LFShardedRingBuf<T> {
     }
 
     /// Gets the total number of jobs within each shard.
-    /// 
+    ///
     /// Time Complexity: O(s) where s is the number of shards
-    /// 
+    ///
     /// Space Complexity: O(s)
     #[inline(always)]
     pub fn get_job_count_total(&self) -> Vec<usize> {
         let mut count = Vec::new();
 
         for shard in &self.inner_rb {
-            count.push(shard.job_count.load(Ordering::Relaxed)); 
+            count.push(shard.job_count.load(Ordering::Relaxed));
         }
         count
     }

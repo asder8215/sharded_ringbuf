@@ -3,6 +3,9 @@ use std::{
     sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize},
 };
 
+/// This is to denote whether the task you are spawning
+/// is an enqueuer or a dequeur. You use this in `spawn_with_cft()`
+/// or `rt_spawn_with_cft`
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TaskRole {
     Enqueue,
@@ -27,16 +30,22 @@ pub enum TaskRole {
 /// later down the line)
 #[derive(Debug)]
 pub(crate) struct TaskNode {
-    pub(crate) role: TaskRole,              // A static role of what the Task is
-    pub(crate) is_done: AtomicBool,         // If the task is completed (assigner reads, enq/deq writes)
-    pub(crate) is_paired: AtomicBool,       // If the task is paired with deq/enq (assigner writes, enq/deq reads)
-    pub(crate) is_assigned: AtomicBool,     // Whether the shard_ind is written or not (assigner writes, enq/deq reads)
-    // pub(crate) is_cancelled: AtomicBool,    // Atomic
-    pub(crate) shard_ind: AtomicUsize,      // The shard index that a task will look at (assigner writes, enq/deq reads)
-    pub(crate) next: AtomicPtr<TaskNode>,   // The next TaskNode
+    /// A static role of what the Task is
+    pub(crate) role: TaskRole,
+    /// If the task is completed (assigner reads, enq/deq writes)
+    pub(crate) is_done: AtomicBool,
+    /// If the task is paired with deq/enq (assigner writes, enq/deq reads)
+    pub(crate) is_paired: AtomicBool,
+    /// Whether the shard_ind is written or not (assigner writes, enq/deq reads)
+    pub(crate) is_assigned: AtomicBool,
+    /// The shard index that a task will look at (assigner writes, enq/deq reads)
+    pub(crate) shard_ind: AtomicUsize,
+    /// The next TaskNode
+    pub(crate) next: AtomicPtr<TaskNode>,
 }
 
 impl TaskNode {
+    /// Instantiates a new TaskNode
     pub(crate) fn new(role: TaskRole) -> Self {
         Self {
             role,
@@ -48,41 +57,33 @@ impl TaskNode {
         }
     }
 }
-
-impl Drop for TaskNode {
-    fn drop(&mut self) {
-        println!("Hi");
-    }
-}
-
 impl PartialEq for TaskNode {
     fn eq(&self, other: &Self) -> bool {
         ptr::eq(self, other)
     }
 }
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct TaskNodePtr(pub *mut TaskNode);
-
-
-
-unsafe impl Send for TaskNodePtr {}
-unsafe impl Sync for TaskNodePtr {}
-
-
-
-
+/// Testing Drop for TaskNode
+impl Drop for TaskNode {
+    fn drop(&mut self) {
+    }
+}
 unsafe impl Send for TaskNode {}
 unsafe impl Sync for TaskNode {}
 
+/// This TaskNodePtr is used to wrap around 
+/// *mut TaskNode because *mut objects are not
+/// Send or Sync (but they are Copy! which is
+/// the most important part here)
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TaskNodePtr(pub *mut TaskNode);
+unsafe impl Send for TaskNodePtr {}
+unsafe impl Sync for TaskNodePtr {}
 impl PartialEq for TaskNodePtr {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
-
 impl Eq for TaskNodePtr {}
-
 impl std::hash::Hash for TaskNodePtr {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         (self.0 as usize).hash(state);
