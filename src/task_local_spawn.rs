@@ -821,35 +821,35 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                         let shard_ind = &scan_node.shard_ind.load(Ordering::Relaxed);
                         let is_shard_empty = buffer.is_shard_empty(*shard_ind);
 
-                        // let pairs = shard_task_map.get_mut(shard_ind);
+                        let pairs = shard_task_map.get_mut(shard_ind);
 
                         // scanner can also try to clean up as well and free
                         if scan_done && is_shard_empty && role == TaskRole::Enqueue {
-                            // if let Some(pairs) = pairs {
-                            //     if let Some(pair) = pairs_map.get(&scan).cloned() {
-                            //         if !(*pair.0).is_done.load(Ordering::Relaxed) {
-                            //             // if my shard is not empty, I need to be unpaired but not reassigned yet!
-                            //             // if I see another enqueuer task here who is not done yet, then I can
-                            //             // offer to work on dequeuing that enqueuer items, so just unpair but not reassign
-                            //             // otherwise, I need reassignment!
-                            //             if !is_shard_empty
-                            //                 && pairs.iter().any(|ptr| {
-                            //                     (*ptr.0).role == TaskRole::Enqueue
-                            //                         && !(*ptr.0).is_done.load(Ordering::Relaxed)
-                            //                 })
-                            //             {
-                            //                 (*pair.0).is_paired.store(false, Ordering::Relaxed);
-                            //             } else {
-                            //                 (*pair.0).is_paired.store(false, Ordering::Relaxed);
-                            //                 (*pair.0).is_assigned.store(false, Ordering::Relaxed);
-                            //             }
-                            //         }
-                            //         pairs_map.remove(&pair);
-                            //         pairs_map.remove(&scan);
-                            //         pairs.remove(&pair);
-                            //         pairs.remove(&scan);
-                            //     }
-                            // }
+                            if let Some(pairs) = pairs {
+                                if let Some(pair) = pairs_map.get(&scan).cloned() {
+                                    if !(*pair.0).is_done.load(Ordering::Relaxed) {
+                                        // if my shard is not empty, I need to be unpaired but not reassigned yet!
+                                        // if I see another enqueuer task here who is not done yet, then I can
+                                        // offer to work on dequeuing that enqueuer items, so just unpair but not reassign
+                                        // otherwise, I need reassignment!
+                                        if !is_shard_empty
+                                            && pairs.iter().any(|ptr| {
+                                                (*ptr.0).role == TaskRole::Enqueue
+                                                    && !(*ptr.0).is_done.load(Ordering::Relaxed)
+                                            })
+                                        {
+                                            (*pair.0).is_paired.store(false, Ordering::Relaxed);
+                                        } else {
+                                            (*pair.0).is_paired.store(false, Ordering::Relaxed);
+                                            (*pair.0).is_assigned.store(false, Ordering::Relaxed);
+                                        }
+                                    }
+                                    pairs_map.remove(&pair);
+                                    pairs_map.remove(&scan);
+                                    pairs.remove(&pair);
+                                    pairs.remove(&scan);
+                                }
+                            }
                             // let next = scan_node.next.load(Ordering::Relaxed);
                             // let free_status = if scan_prev.0.is_null() {
                             //     // Because task registration pre-pends at head, must be very careful here
@@ -886,53 +886,53 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                             // Cloning the Option doesn't mean cloning the whole TaskNode internals
                             // It's actually cloning the memory location to the TaskNode
                             // Super fast!
-                            // if let Some(pairs) = pairs {
-                            //     if let Some(pair) = pairs_map.get(&scan).cloned() {
-                            //         match scan_role {
-                            //             TaskRole::Enqueue => {
-                            //                 if !(*pair.0).is_done.load(Ordering::Relaxed) {
-                            //                     // if my shard is not empty, I need to be unpaired but not reassigned yet!
-                            //                     // if I see another enqueuer task here who is not done yet, then I can
-                            //                     // offer to work on dequeuing that enqueuer items, so just unpair but not reassign
-                            //                     // otherwise, I need reassignment!
-                            //                     if !is_shard_empty
-                            //                         && pairs.iter().any(|ptr| {
-                            //                             (*ptr.0).role == TaskRole::Enqueue
-                            //                                 && !(*ptr.0)
-                            //                                     .is_done
-                            //                                     .load(Ordering::Relaxed)
-                            //                         })
-                            //                     {
-                            //                         (*pair.0)
-                            //                             .is_paired
-                            //                             .store(false, Ordering::Relaxed);
-                            //                     } else {
-                            //                         (*pair.0)
-                            //                             .is_paired
-                            //                             .store(false, Ordering::Relaxed);
-                            //                         (*pair.0)
-                            //                             .is_assigned
-                            //                             .store(false, Ordering::Relaxed);
-                            //                     }
-                            //                 }
-                            //                 pairs_map.remove(&pair);
-                            //                 pairs_map.remove(&scan);
-                            //                 pairs.remove(&pair);
-                            //                 pairs.remove(&scan);
-                            //             }
-                            //             TaskRole::Dequeue => {
-                            //                 // an enqueuer who is not done will stick to the shard
-                            //                 // they were assigned to, but they will be denoted as unpaired
-                            //                 // this is so that future dequeuers will bundle up with this enqueuer
-                            //                 (*pair.0).is_paired.store(false, Ordering::Relaxed);
-                            //                 pairs_map.remove(&pair);
-                            //                 pairs_map.remove(&scan);
-                            //                 pairs.remove(&pair);
-                            //                 pairs.remove(&scan);
-                            //             }
-                            //         }
-                            //     }
-                            // }
+                            if let Some(pairs) = pairs {
+                                if let Some(pair) = pairs_map.get(&scan).cloned() {
+                                    match scan_role {
+                                        TaskRole::Enqueue => {
+                                            if !(*pair.0).is_done.load(Ordering::Relaxed) {
+                                                // if my shard is not empty, I need to be unpaired but not reassigned yet!
+                                                // if I see another enqueuer task here who is not done yet, then I can
+                                                // offer to work on dequeuing that enqueuer items, so just unpair but not reassign
+                                                // otherwise, I need reassignment!
+                                                if !is_shard_empty
+                                                    && pairs.iter().any(|ptr| {
+                                                        (*ptr.0).role == TaskRole::Enqueue
+                                                            && !(*ptr.0)
+                                                                .is_done
+                                                                .load(Ordering::Relaxed)
+                                                    })
+                                                {
+                                                    (*pair.0)
+                                                        .is_paired
+                                                        .store(false, Ordering::Relaxed);
+                                                } else {
+                                                    (*pair.0)
+                                                        .is_paired
+                                                        .store(false, Ordering::Relaxed);
+                                                    (*pair.0)
+                                                        .is_assigned
+                                                        .store(false, Ordering::Relaxed);
+                                                }
+                                            }
+                                            pairs_map.remove(&pair);
+                                            pairs_map.remove(&scan);
+                                            pairs.remove(&pair);
+                                            pairs.remove(&scan);
+                                        }
+                                        TaskRole::Dequeue => {
+                                            // an enqueuer who is not done will stick to the shard
+                                            // they were assigned to, but they will be denoted as unpaired
+                                            // this is so that future dequeuers will bundle up with this enqueuer
+                                            (*pair.0).is_paired.store(false, Ordering::Relaxed);
+                                            pairs_map.remove(&pair);
+                                            pairs_map.remove(&scan);
+                                            pairs.remove(&pair);
+                                            pairs.remove(&scan);
+                                        }
+                                    }
+                                }
+                            }
 
                             // let next = scan_node.next.load(Ordering::Relaxed);
                             // let free_status = if scan_prev.0.is_null() {
