@@ -585,7 +585,36 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
 
             // assigner can get out of this function once it complete cleaning up
             // the list and resets the termination signal to false
-            if buffer.assigner_terminate.load(Ordering::Relaxed) && current.0.is_null() {
+            if buffer.assigner_terminate.load(Ordering::Relaxed) {
+                while !current.0.is_null() {
+                    let task_node = unsafe { &*current.0 };
+                    let next = task_node.next.load(Ordering::Relaxed);
+                    let free_status = if prev.0.is_null() {
+                        // Because task registration pre-pends at head, must be very careful here
+                        // we use CAS as result to see if we grabbed the head
+                        buffer
+                            .head
+                            .compare_exchange_weak(
+                                current.0,
+                                next,
+                                Ordering::AcqRel,
+                                Ordering::Relaxed,
+                            )
+                            .is_ok()
+                    } else {
+                        // because task registration happens at the beginning, this is always safe
+                        // to free
+                        unsafe { &*prev.0 }.next.store(next, Ordering::Release);
+                        true
+                    };
+
+                    // we can successfully free this item
+                    if free_status {
+                        drop(unsafe { Box::from_raw(current.0) });
+                    }
+                    current = TaskNodePtr(next)
+                }
+
                 buffer.assigner_terminate.store(true, Ordering::Relaxed);
                 break;
             }
