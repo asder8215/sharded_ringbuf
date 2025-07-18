@@ -1,8 +1,6 @@
 # Change Log for lf-shardedringbuf:
 
 ## In v4.1.0:
-* Most async functions have been removed upon further inspection that they are not cancel-free and thus the sync version of it should be the only that should be used.
-they can cause the shard locks to be kept without a good way to release them. Truly a frustration in
 * A new (unstable) policy has been made called `CFT` (or Completely Fair Tasks). See `src/task_local_spawn.rs` for more details. Note that the shard policies might be refactored in the future (alongside all the other policies) to be as part of one of `LFShardedRingBuf<T>` functions.
 * Updated doc comments on spawn function and Shard Policies and various other places.
 * No new benchmarking details have been updated as of now due.
