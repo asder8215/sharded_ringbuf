@@ -581,6 +581,8 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
             // let mut current = buffer_clone.get_head();
             let mut current = buffer.get_head_relaxed();
 
+            let mut rebound_scan: Option<TaskNodePtr> = None;
+
             // assigner can get out of this function once it complete cleaning up
             // the list
             if buffer.assigner_terminate.load(Ordering::Relaxed) && current.0.is_null() {
@@ -772,8 +774,11 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
 
                     // This is our second pointer, we use this to scan forward
                     // for a match to pair with
-                    let mut scan_prev = current;
-                    let mut scan = TaskNodePtr(task_node.next.load(Ordering::Relaxed));
+                    // let mut scan_prev = current;
+                    let mut scan = match rebound_scan {
+                        None => TaskNodePtr(task_node.next.load(Ordering::Relaxed)),
+                        Some(rebound) => rebound,
+                    };
 
                     while !scan.0.is_null() {
                         let scan_node = &*scan.0;
@@ -786,61 +791,62 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                         let shard_ind = &scan_node.shard_ind.load(Ordering::Relaxed);
                         let is_shard_empty = buffer.is_shard_empty(*shard_ind);
 
-                        let pairs = shard_task_map.get_mut(shard_ind);
+                        // let pairs = shard_task_map.get_mut(shard_ind);
 
                         // scanner can also try to clean up as well and free
                         if scan_done && is_shard_empty && role == TaskRole::Enqueue {
-                            if let Some(pairs) = pairs {
-                                if let Some(pair) = pairs_map.get(&scan).cloned() {
-                                    if !(*pair.0).is_done.load(Ordering::Relaxed) {
-                                        // if my shard is not empty, I need to be unpaired but not reassigned yet!
-                                        // if I see another enqueuer task here who is not done yet, then I can
-                                        // offer to work on dequeuing that enqueuer items, so just unpair but not reassign
-                                        // otherwise, I need reassignment!
-                                        if !is_shard_empty
-                                            && pairs.iter().any(|ptr| {
-                                                (*ptr.0).role == TaskRole::Enqueue
-                                                    && !(*ptr.0).is_done.load(Ordering::Relaxed)
-                                            })
-                                        {
-                                            (*pair.0).is_paired.store(false, Ordering::Relaxed);
-                                        } else {
-                                            (*pair.0).is_paired.store(false, Ordering::Relaxed);
-                                            (*pair.0).is_assigned.store(false, Ordering::Relaxed);
-                                        }
-                                    }
-                                    pairs_map.remove(&pair);
-                                    pairs_map.remove(&scan);
-                                    pairs.remove(&pair);
-                                    pairs.remove(&scan);
-                                }
-                            }
-                            let next = scan_node.next.load(Ordering::Relaxed);
-                            let free_status = if scan_prev.0.is_null() {
-                                // Because task registration pre-pends at head, must be very careful here
-                                // we use CAS as result to see if we grabbed the head
-                                buffer
-                                    .head
-                                    .compare_exchange_weak(
-                                        scan.0,
-                                        next,
-                                        Ordering::AcqRel,
-                                        Ordering::Relaxed,
-                                    )
-                                    .is_ok()
-                            } else {
-                                // because task registration happens at the beginning, this is always safe
-                                // to free
-                                (*scan_prev.0).next.store(next, Ordering::Relaxed);
-                                // (*scan_prev.0).next.store(next, Ordering::Release);
-                                true
-                            };
+                            // if let Some(pairs) = pairs {
+                            //     if let Some(pair) = pairs_map.get(&scan).cloned() {
+                            //         if !(*pair.0).is_done.load(Ordering::Relaxed) {
+                            //             // if my shard is not empty, I need to be unpaired but not reassigned yet!
+                            //             // if I see another enqueuer task here who is not done yet, then I can
+                            //             // offer to work on dequeuing that enqueuer items, so just unpair but not reassign
+                            //             // otherwise, I need reassignment!
+                            //             if !is_shard_empty
+                            //                 && pairs.iter().any(|ptr| {
+                            //                     (*ptr.0).role == TaskRole::Enqueue
+                            //                         && !(*ptr.0).is_done.load(Ordering::Relaxed)
+                            //                 })
+                            //             {
+                            //                 (*pair.0).is_paired.store(false, Ordering::Relaxed);
+                            //             } else {
+                            //                 (*pair.0).is_paired.store(false, Ordering::Relaxed);
+                            //                 (*pair.0).is_assigned.store(false, Ordering::Relaxed);
+                            //             }
+                            //         }
+                            //         pairs_map.remove(&pair);
+                            //         pairs_map.remove(&scan);
+                            //         pairs.remove(&pair);
+                            //         pairs.remove(&scan);
+                            //     }
+                            // }
+                            // let next = scan_node.next.load(Ordering::Relaxed);
+                            // let free_status = if scan_prev.0.is_null() {
+                            //     // Because task registration pre-pends at head, must be very careful here
+                            //     // we use CAS as result to see if we grabbed the head
+                            //     buffer
+                            //         .head
+                            //         .compare_exchange_weak(
+                            //             scan.0,
+                            //             next,
+                            //             Ordering::AcqRel,
+                            //             Ordering::Relaxed,
+                            //         )
+                            //         .is_ok()
+                            // } else {
+                            //     // because task registration happens at the beginning, this is always safe
+                            //     // to free
+                            //     (*scan_prev.0).next.store(next, Ordering::Relaxed);
+                            //     // (*scan_prev.0).next.store(next, Ordering::Release);
+                            //     true
+                            // };
 
-                            // we can successfully free this item
-                            if free_status {
-                                drop(Box::from_raw(scan.0));
-                            }
-                            scan = TaskNodePtr(next);
+                            // // we can successfully free this item
+                            // if free_status {
+                            //     drop(Box::from_raw(scan.0));
+                            // }
+                            // scan = TaskNodePtr(next);
+                            scan = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
                             continue;
                         } else if scan_done && scan_role == TaskRole::Dequeue {
                             // We remove done pairs from the Hashmap/Hashset together
@@ -850,86 +856,87 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                             // Cloning the Option doesn't mean cloning the whole TaskNode internals
                             // It's actually cloning the memory location to the TaskNode
                             // Super fast!
-                            if let Some(pairs) = pairs {
-                                if let Some(pair) = pairs_map.get(&scan).cloned() {
-                                    match scan_role {
-                                        TaskRole::Enqueue => {
-                                            if !(*pair.0).is_done.load(Ordering::Relaxed) {
-                                                // if my shard is not empty, I need to be unpaired but not reassigned yet!
-                                                // if I see another enqueuer task here who is not done yet, then I can
-                                                // offer to work on dequeuing that enqueuer items, so just unpair but not reassign
-                                                // otherwise, I need reassignment!
-                                                if !is_shard_empty
-                                                    && pairs.iter().any(|ptr| {
-                                                        (*ptr.0).role == TaskRole::Enqueue
-                                                            && !(*ptr.0)
-                                                                .is_done
-                                                                .load(Ordering::Relaxed)
-                                                    })
-                                                {
-                                                    (*pair.0)
-                                                        .is_paired
-                                                        .store(false, Ordering::Relaxed);
-                                                } else {
-                                                    (*pair.0)
-                                                        .is_paired
-                                                        .store(false, Ordering::Relaxed);
-                                                    (*pair.0)
-                                                        .is_assigned
-                                                        .store(false, Ordering::Relaxed);
-                                                }
-                                            }
-                                            pairs_map.remove(&pair);
-                                            pairs_map.remove(&scan);
-                                            pairs.remove(&pair);
-                                            pairs.remove(&scan);
-                                        }
-                                        TaskRole::Dequeue => {
-                                            // an enqueuer who is not done will stick to the shard
-                                            // they were assigned to, but they will be denoted as unpaired
-                                            // this is so that future dequeuers will bundle up with this enqueuer
-                                            (*pair.0).is_paired.store(false, Ordering::Relaxed);
-                                            pairs_map.remove(&pair);
-                                            pairs_map.remove(&scan);
-                                            pairs.remove(&pair);
-                                            pairs.remove(&scan);
-                                        }
-                                    }
-                                }
-                            }
+                            // if let Some(pairs) = pairs {
+                            //     if let Some(pair) = pairs_map.get(&scan).cloned() {
+                            //         match scan_role {
+                            //             TaskRole::Enqueue => {
+                            //                 if !(*pair.0).is_done.load(Ordering::Relaxed) {
+                            //                     // if my shard is not empty, I need to be unpaired but not reassigned yet!
+                            //                     // if I see another enqueuer task here who is not done yet, then I can
+                            //                     // offer to work on dequeuing that enqueuer items, so just unpair but not reassign
+                            //                     // otherwise, I need reassignment!
+                            //                     if !is_shard_empty
+                            //                         && pairs.iter().any(|ptr| {
+                            //                             (*ptr.0).role == TaskRole::Enqueue
+                            //                                 && !(*ptr.0)
+                            //                                     .is_done
+                            //                                     .load(Ordering::Relaxed)
+                            //                         })
+                            //                     {
+                            //                         (*pair.0)
+                            //                             .is_paired
+                            //                             .store(false, Ordering::Relaxed);
+                            //                     } else {
+                            //                         (*pair.0)
+                            //                             .is_paired
+                            //                             .store(false, Ordering::Relaxed);
+                            //                         (*pair.0)
+                            //                             .is_assigned
+                            //                             .store(false, Ordering::Relaxed);
+                            //                     }
+                            //                 }
+                            //                 pairs_map.remove(&pair);
+                            //                 pairs_map.remove(&scan);
+                            //                 pairs.remove(&pair);
+                            //                 pairs.remove(&scan);
+                            //             }
+                            //             TaskRole::Dequeue => {
+                            //                 // an enqueuer who is not done will stick to the shard
+                            //                 // they were assigned to, but they will be denoted as unpaired
+                            //                 // this is so that future dequeuers will bundle up with this enqueuer
+                            //                 (*pair.0).is_paired.store(false, Ordering::Relaxed);
+                            //                 pairs_map.remove(&pair);
+                            //                 pairs_map.remove(&scan);
+                            //                 pairs.remove(&pair);
+                            //                 pairs.remove(&scan);
+                            //             }
+                            //         }
+                            //     }
+                            // }
 
-                            let next = scan_node.next.load(Ordering::Relaxed);
-                            let free_status = if scan_prev.0.is_null() {
-                                // Because task registration pre-pends at head, must be very careful here
-                                // we use CAS as result to see if we grabbed the head
-                                buffer
-                                    .head
-                                    .compare_exchange_weak(
-                                        scan.0,
-                                        next,
-                                        Ordering::AcqRel,
-                                        Ordering::Relaxed,
-                                    )
-                                    .is_ok()
-                            } else {
-                                // because task registration happens at the beginning, this is always safe
-                                // to free
-                                (*scan_prev.0).next.store(next, Ordering::Relaxed);
-                                true
-                            };
+                            // let next = scan_node.next.load(Ordering::Relaxed);
+                            // let free_status = if scan_prev.0.is_null() {
+                            //     // Because task registration pre-pends at head, must be very careful here
+                            //     // we use CAS as result to see if we grabbed the head
+                            //     buffer
+                            //         .head
+                            //         .compare_exchange_weak(
+                            //             scan.0,
+                            //             next,
+                            //             Ordering::AcqRel,
+                            //             Ordering::Relaxed,
+                            //         )
+                            //         .is_ok()
+                            // } else {
+                            //     // because task registration happens at the beginning, this is always safe
+                            //     // to free
+                            //     (*scan_prev.0).next.store(next, Ordering::Relaxed);
+                            //     true
+                            // };
 
-                            // we can successfully free this item
-                            if free_status {
-                                drop(Box::from_raw(scan.0));
-                            }
-                            scan = TaskNodePtr(next);
+                            // // we can successfully free this item
+                            // if free_status {
+                            //     drop(Box::from_raw(scan.0));
+                            // }
+                            // scan = TaskNodePtr(next);
+                            scan = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
                             continue;
                         }
 
                         // if it's paired skip forward, heck don't even let this
                         // be something that current can rebound to
                         if scan_paired {
-                            scan_prev = TaskNodePtr(scan.0);
+                            // scan_prev = TaskNodePtr(scan.0);
                             scan = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
                             continue;
                         }
@@ -957,7 +964,7 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                             {
                                 scan_node.is_assigned.store(false, Ordering::Relaxed);
                             } else {
-                                scan_prev = TaskNodePtr(scan.0);
+                                // scan_prev = TaskNodePtr(scan.0);
                                 scan = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
                                 continue;
                             }
@@ -993,20 +1000,22 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                 pairs_map.insert(deq, enq);
 
                                 // This refers to the one you just paired or matched up with!
-                                prev = scan;
-                                current = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
-
+                                // prev = scan;
+                                // current = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
+                                rebound_scan =
+                                    Some(TaskNodePtr(scan_node.next.load(Ordering::Relaxed)));
                                 break;
                             }
                         }
-                        scan_prev = scan;
+                        // scan_prev = scan;
                         scan = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
                     }
 
                     // Couldn't find a pair to match enqueue/dequeue :(
-                    if scan.0.is_null() {
-                        break;
-                    }
+                    // if scan.0.is_null() {
+                    //     break;
+                    // }
+                    current = TaskNodePtr(task_node.next.load(Ordering::Relaxed));
                 }
             }
             yield_now().await;
