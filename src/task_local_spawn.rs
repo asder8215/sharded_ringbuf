@@ -22,20 +22,20 @@ use tokio::{
     task::{JoinHandle, spawn, yield_now},
 };
 
-/// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime 
+/// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
 /// context for the purpose of using it with `LFShardedRingBuf<T>`.
 ///
 /// This function or [rt_spawn_buffer_task] *must* be used in order to
 /// enqueue or dequeue items onto `LFShardedRingBuf<T>` due to task local
 /// variables. Using this function otherwise just spawns a regular Tokio task.
-/// 
+///
 /// Here's an example of how you would use it with `LFShardedRingBuf<T>`:
 /// ```rust
 /// let CAPACITY: usize = 1024;
 /// let SHARDS: usize = 4;
 /// let ITEM_PER_TASK = 1000;
 /// let MAX_TASK = 4;
-/// 
+///
 /// let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(CAPACITY, SHARDS));
 ///
 /// let mut deq_threads = Vec::with_capacity(MAX_TASKS);
@@ -127,9 +127,9 @@ where
 /// of using it with `LFShardedRingBuf<T>`.
 ///
 /// This function or [spawn_buffer_task] *must* be used in order to enqueue or
-/// dequeue items onto `LFShardedRingBuf<T>` due to task local variables. 
+/// dequeue items onto `LFShardedRingBuf<T>` due to task local variables.
 /// Using this function otherwise just spawns a regular Tokio task.
-/// 
+///
 /// Here's an example of how you might use it with `LFShardedRingBuf<T>`.
 /// ```rust
 /// let CAPACITY: usize = 1024;
@@ -137,13 +137,13 @@ where
 /// let ITEM_PER_TASK = 1000;
 /// let MAX_TASK = 4;
 /// let MAX_THREADS = 4;
-/// 
+///
 /// let runtime = tokio::runtime::Builder::new_multi_thread()
 ///   .enable_all()
 ///   .worker_threads(MAX_THREADS)
 ///   .build()
 ///   .unwrap();
-/// 
+///
 /// let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(CAPACITY, SHARDS));
 ///
 /// let mut deq_threads = Vec::with_capacity(MAX_TASKS);
@@ -233,40 +233,40 @@ where
     }
 }
 
-/// ⚠️ **Warning:** This function is **NOT** cancel-safe. 
-/// 
-/// It won't cause a memory leak because the assigner task and LFShardedRingBuf<T> 
+/// ⚠️ **Warning:** This function is **NOT** cancel-safe.
+///
+/// It won't cause a memory leak because the assigner task and LFShardedRingBuf<T>
 /// will clean up all task nodes on termination or on drop, but it causes stale task nodes
 /// to be left in the task list, which are not marked done and the assigner task is unable
 /// to clean or unpair the opposing enqueuer/dequeuer task which may or may not be cancelled
-/// as well. If cancel-safety is critical to you, use `spawn_with_buffer_task` or 
+/// as well. If cancel-safety is critical to you, use `spawn_with_buffer_task` or
 /// `rt_spawn_with_buffer_task` and the best following `ShardPolicy`` for your situation.
-/// 
+///
 /// This is spawning with a new policy called CFT, aka Completely Fair Tasks. It uses a
-/// "smart task" called the assigner via `spawn_assigner()` which handles all pinning of 
+/// "smart task" called the assigner via `spawn_assigner()` which handles all pinning of
 /// enqueuer tasks to dequeuer tasks to a shard for you. Task registration to the list is
 /// not done in a lock free manner unfortunately (it uses a spin lock under the hood).
 /// It's meant to be a convenient policy, where if cancel-safety is not important, all
 /// that the users would need to think about is the appropriate number of shards and capacity
 /// per shard.
-/// 
+///
 /// There are certain caveats with this policy:
 /// * The user is responsible for providing the correct `TaskRole` (Enqueuer or Dequeuer)
-/// and utilize the enqueue or dequeue function appropriately from the buffer
+///   and utilize the enqueue or dequeue function appropriately from the buffer
 /// * The user is responsible for providing the correct, associated buffer to spawn the
-/// buffer with.
+///   buffer with.
 /// * This policy can't handle more infinite looping enqueuers than infinite loop dequeuers *should*
-/// the number of shards used is greater than the number of infinite looping dequeuers.
+///   the number of shards used is greater than the number of infinite looping dequeuers.
 ///     * This is because the assigner pins the dequeuer to an enqueuer to a shard together. It will only
 ///       re-pin dequeuer once the dequeuer completely empties the shard and it is not paired with
 ///       an enqueuer. If you really want to use more infinite looping enqueuers than dequeuers, then
 ///       use only {# of infinite looping dequeuers} shards.
-/// 
+///
 /// This function may be refactored in the future to be a part of one of LFShardedRingBuf<T>'s functions
 /// so that the first two caveats can be addressed nicely.
-/// 
+///
 /// Here's an example of how to use this function:
-/// 
+///
 /// ```rust
 /// const MAX_ITEMS:  usize = 100000;
 /// const MAX_SHARDS: usize = 10;
@@ -340,7 +340,7 @@ where
     spawn(TASK_NODE.scope(
         Cell::new(CachePadded::new(TaskNodePtr(ptr::null_mut()))),
         SHARD_POLICY.scope(
-            Cell::new(ShardPolicyKind::CFT),
+            Cell::new(ShardPolicyKind::Cft),
             SHARD_INDEX.scope(
                 Cell::new(None),
                 SHIFT.scope(Cell::new(0), async move {
@@ -400,53 +400,52 @@ where
     ))
 }
 
-
 /// ⚠️ **Warning:** This function is **NOT** cancel-safe. The JoinHandle should neither
 /// be aborted or the future provided should have no concern about cancelling.
-/// 
-/// In detail: It won't cause a memory leak because the assigner task and LFShardedRingBuf<T> 
+///
+/// In detail: It won't cause a memory leak because the assigner task and LFShardedRingBuf<T>
 /// will clean up all task nodes on termination or on drop, but it causes stale task nodes
 /// to be left in the task list, which are not marked done and the assigner task is unable
 /// to clean or unpair the opposing enqueuer/dequeuer task which may or may not be cancelled
-/// as well. If cancel-safety is critical to you, use `spawn_with_buffer_task` or 
+/// as well. If cancel-safety is critical to you, use `spawn_with_buffer_task` or
 /// `rt_spawn_with_buffer_task` and the best following `ShardPolicy`` for your situation.
-/// 
-/// This is spawning with a user provided runtime with a new policy called CFT, 
-/// aka Completely Fair Tasks. It uses a "smart task" called the assigner via 
-/// `spawn_assigner()` which handles all pinning of enqueuer tasks to dequeuer tasks 
-/// to a shard for you. Task registration to the list is not done in a lock free manner 
-/// unfortunately (it uses a spin lock under the hood). It's meant to be a convenient policy, 
-/// where if cancel-safety is not important, all that the users would need to think about 
+///
+/// This is spawning with a user provided runtime with a new policy called CFT,
+/// aka Completely Fair Tasks. It uses a "smart task" called the assigner via
+/// `spawn_assigner()` which handles all pinning of enqueuer tasks to dequeuer tasks
+/// to a shard for you. Task registration to the list is not done in a lock free manner
+/// unfortunately (it uses a spin lock under the hood). It's meant to be a convenient policy,
+/// where if cancel-safety is not important, all that the users would need to think about
 /// is the appropriate number of shards and capacity per shard.
-/// 
+///
 /// There are certain caveats with this policy:
 /// * The user is responsible for providing the correct `TaskRole` (Enqueuer or Dequeuer)
-/// and utilize the enqueue or dequeue function appropriately from the buffer
+///   and utilize the enqueue or dequeue function appropriately from the buffer
 /// * The user is responsible for providing the correct, associated buffer to spawn the
-/// buffer with.
+///   buffer with.
 /// * This policy can't handle more infinite looping enqueuers than infinite loop dequeuers *should*
-/// the number of shards used is greater than the number of infinite looping dequeuers.
+///   the number of shards used is greater than the number of infinite looping dequeuers.
 ///     * This is because the assigner pins the dequeuer to an enqueuer to a shard together. It will only
 ///       re-pin dequeuer once the dequeuer completely empties the shard and it is not paired with
 ///       an enqueuer. If you really want to use more infinite looping enqueuers than dequeuers, then
 ///       use only {# of infinite looping dequeuers} shards.
-/// 
+///
 /// This function may be refactored in the future to be a part of one of LFShardedRingBuf<T>'s functions
 /// so that the first two caveats can be addressed nicely.
-/// 
+///
 /// Here's an example of how to use this function:
 /// ```rust
 /// const MAX_ITEMS:   usize = 100000;
 /// const MAX_SHARDS:  usize = 10;
 /// const MAX_TASKS:   usize = 5;
 /// const MAX_THREADS: usize = 5;
-/// 
+///
 /// let runtime = tokio::runtime::Builder::new_multi_thread()
 ///   .enable_all()
 ///   .worker_threads(MAX_THREADS)
 ///   .build()
 ///   .unwrap();
-/// 
+///
 /// let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 ///
 /// let mut deq_threads = Vec::new();
@@ -517,7 +516,7 @@ where
     rt.spawn(TASK_NODE.scope(
         Cell::new(CachePadded::new(TaskNodePtr(ptr::null_mut()))),
         SHARD_POLICY.scope(
-            Cell::new(ShardPolicyKind::CFT),
+            Cell::new(ShardPolicyKind::Cft),
             SHARD_INDEX.scope(
                 Cell::new(None),
                 SHIFT.scope(Cell::new(0), async move {
@@ -580,7 +579,7 @@ where
 /// ⚠️ **Warning:** This function is **NOT** cancel-safe.
 /// What I mean by cancel-safety is that the returned JoinHandle should not be
 /// aborted by any means. See below on note for graceful termination.
-/// 
+///
 /// This is your helpful assigner task that handles assigning enqueuer tasks to dequeuer
 /// and vice versa in an optimal way.
 ///
@@ -595,7 +594,7 @@ where
 ///
 /// Moreover, there are certain caveats to using this assigner task:
 /// * It can't handle more infinite looping enqueuers than infinite loop dequeuers should
-/// the number of shards used is greater than the number of infinite looping dequeuers.
+///   the number of shards used is greater than the number of infinite looping dequeuers.
 ///
 /// This is because the assigner pins the dequeuer to an enqueuer to a shard together. It will only
 /// re-pin dequeuer once the dequeuer completely empties the shard and it is not paired with
@@ -659,15 +658,11 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                     // if I see another enqueuer task here who is not done yet, then I can
                                     // offer to work on dequeuing that enqueuer items, so just unpair but not reassign
                                     // otherwise, I need reassignment!
-                                    if pairs
-                                        .iter()
-                                        .find(|ptr| {
-                                            (*ptr.0).role == TaskRole::Enqueue
-                                                && (*ptr.0).is_done.load(Ordering::Relaxed) == false
-                                                && !(*ptr.0).is_paired.load(Ordering::Relaxed)
-                                        })
-                                        .is_some()
-                                    {
+                                    if pairs.iter().any(|ptr| {
+                                        (*ptr.0).role == TaskRole::Enqueue
+                                            && !(*ptr.0).is_done.load(Ordering::Relaxed)
+                                            && !(*ptr.0).is_paired.load(Ordering::Relaxed)
+                                    }) {
                                         (*pair.0).is_paired.store(false, Ordering::Relaxed);
                                     } else {
                                         (*pair.0).is_assigned.store(false, Ordering::Relaxed);
@@ -790,14 +785,11 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                             .get_mut(&task_node.shard_ind.load(Ordering::Relaxed))
                             .unwrap();
                         if is_shard_empty
-                            && pairs
-                                .iter()
-                                .find(|ptr| {
-                                    (*ptr.0).role == TaskRole::Enqueue
-                                        && (*ptr.0).is_done.load(Ordering::Relaxed) == false
-                                        && !(*ptr.0).is_paired.load(Ordering::Relaxed)
-                                })
-                                .is_none()
+                            && !pairs.iter().any(|ptr| {
+                                (*ptr.0).role == TaskRole::Enqueue
+                                    && !(*ptr.0).is_done.load(Ordering::Relaxed)
+                                    && !(*ptr.0).is_paired.load(Ordering::Relaxed)
+                            })
                         {
                             task_node.is_assigned.store(false, Ordering::Relaxed);
                         } else {
@@ -834,16 +826,11 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                         // if I see another enqueuer task here who is not done yet, then I can
                                         // offer to work on dequeuing that enqueuer items, so just unpair but not reassign
                                         // otherwise, I need reassignment!
-                                        if !is_shard_empty {
-                                            (*pair.0).is_paired.store(false, Ordering::Relaxed);
-                                        } else if pairs
-                                            .iter()
-                                            .find(|ptr| {
+                                        if !is_shard_empty
+                                            && pairs.iter().any(|ptr| {
                                                 (*ptr.0).role == TaskRole::Enqueue
-                                                    && (*ptr.0).is_done.load(Ordering::Relaxed)
-                                                        == false
+                                                    && !(*ptr.0).is_done.load(Ordering::Relaxed)
                                             })
-                                            .is_some()
                                         {
                                             (*pair.0).is_paired.store(false, Ordering::Relaxed);
                                         } else {
@@ -901,20 +888,13 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                                 // if I see another enqueuer task here who is not done yet, then I can
                                                 // offer to work on dequeuing that enqueuer items, so just unpair but not reassign
                                                 // otherwise, I need reassignment!
-                                                if !is_shard_empty {
-                                                    (*pair.0)
-                                                        .is_paired
-                                                        .store(false, Ordering::Relaxed);
-                                                } else if pairs
-                                                    .iter()
-                                                    .find(|ptr| {
+                                                if !is_shard_empty
+                                                    && pairs.iter().any(|ptr| {
                                                         (*ptr.0).role == TaskRole::Enqueue
-                                                            && (*ptr.0)
+                                                            && !(*ptr.0)
                                                                 .is_done
                                                                 .load(Ordering::Relaxed)
-                                                                == false
                                                     })
-                                                    .is_some()
                                                 {
                                                     (*pair.0)
                                                         .is_paired
@@ -998,14 +978,11 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                 .get_mut(&scan_node.shard_ind.load(Ordering::Relaxed))
                                 .unwrap();
                             if is_shard_empty
-                                && pairs
-                                    .iter()
-                                    .find(|ptr| {
-                                        (*ptr.0).role == TaskRole::Enqueue
-                                            && (*ptr.0).is_done.load(Ordering::Relaxed) == false
-                                            && !(*ptr.0).is_paired.load(Ordering::Relaxed)
-                                    })
-                                    .is_none()
+                                && !pairs.iter().any(|ptr| {
+                                    (*ptr.0).role == TaskRole::Enqueue
+                                        && !(*ptr.0).is_done.load(Ordering::Relaxed)
+                                        && !(*ptr.0).is_paired.load(Ordering::Relaxed)
+                                })
                             {
                                 scan_node.is_assigned.store(false, Ordering::Relaxed);
                             } else {

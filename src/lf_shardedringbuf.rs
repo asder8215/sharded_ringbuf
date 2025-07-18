@@ -256,7 +256,7 @@ impl<T> LFShardedRingBuf<T> {
         let shard_count = self.shard_locks.len();
         let mut current = match get_shard_policy() {
             ShardPolicyKind::RandomAndSweep => frand(0..shard_count),
-            ShardPolicyKind::CFT => {
+            ShardPolicyKind::Cft => {
                 // What CFT relies on for its starting index is what's written
                 // to this specific task's TaskNodePtr by the assigner task
                 let task_node = unsafe { &*get_task_node().0 };
@@ -332,7 +332,7 @@ impl<T> LFShardedRingBuf<T> {
                 }
             }
 
-            if !matches!(get_shard_policy(), ShardPolicyKind::CFT { .. }) {
+            if !matches!(get_shard_policy(), ShardPolicyKind::Cft) {
                 // Move to the next index to check if item can be placed inside
                 current = (current + get_shift()) % shard_count;
                 spins += get_shift();
@@ -340,7 +340,7 @@ impl<T> LFShardedRingBuf<T> {
                 // yield only once the enqueuers or dequeuers task has went one round through
                 // the shard_job buffer
                 if spins >= shard_count {
-                    if matches!(get_shard_policy(), ShardPolicyKind::ShiftBy { .. }) {
+                    if matches!(get_shard_policy(), ShardPolicyKind::ShiftBy) {
                         current = (current + 1) % shard_count;
                     }
                     spins = 0;

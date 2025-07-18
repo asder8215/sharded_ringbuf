@@ -64,13 +64,12 @@ impl PartialEq for TaskNode {
 }
 /// Testing Drop for TaskNode
 impl Drop for TaskNode {
-    fn drop(&mut self) {
-    }
+    fn drop(&mut self) {}
 }
 unsafe impl Send for TaskNode {}
 unsafe impl Sync for TaskNode {}
 
-/// This TaskNodePtr is used to wrap around 
+/// This TaskNodePtr is used to wrap around
 /// *mut TaskNode because *mut objects are not
 /// Send or Sync (but they are Copy! which is
 /// the most important part here)

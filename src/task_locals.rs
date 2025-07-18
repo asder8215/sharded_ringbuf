@@ -79,11 +79,7 @@ pub(crate) fn set_task_node(task_ptr: CachePadded<TaskNodePtr>) {
 #[inline(always)]
 pub(crate) fn set_task_done() {
     TASK_NODE
-        .try_with(|ptr| {
-            unsafe {
-                (*ptr.get().0).is_done.store(true, Ordering::Relaxed)
-            }
-        })
+        .try_with(|ptr| unsafe { (*ptr.get().0).is_done.store(true, Ordering::Relaxed) })
         .unwrap_or_else(|_| {
             panic!(
                 "TASK_NODE is not initialized. Use `.spawn_buffer_task()` with CFT shard policy."

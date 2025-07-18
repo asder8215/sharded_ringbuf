@@ -1,12 +1,12 @@
-use lf_shardedringbuf::spawn_assigner;
-use lf_shardedringbuf::spawn_with_cft;
-use lf_shardedringbuf::terminate_assigner;
 use lf_shardedringbuf::LFShardedRingBuf;
 use lf_shardedringbuf::ShardPolicy;
-use lf_shardedringbuf::spawn_buffer_task;
 use lf_shardedringbuf::TaskRole;
-use tokio::task::JoinHandle;
+use lf_shardedringbuf::spawn_assigner;
+use lf_shardedringbuf::spawn_buffer_task;
+use lf_shardedringbuf::spawn_with_cft;
+use lf_shardedringbuf::terminate_assigner;
 use std::sync::Arc;
+use tokio::task::JoinHandle;
 
 #[tokio::test(flavor = "current_thread")]
 async fn test_spsc_tasks() {
@@ -470,7 +470,7 @@ async fn test_shiftby_uneven_tasks() {
         let handler = spawn_buffer_task(
             ShardPolicy::ShiftBy {
                 initial_index: None,
-                shift: MAX_TASKS
+                shift: MAX_TASKS,
             },
             async move {
                 let rb = rb.clone();
@@ -489,12 +489,12 @@ async fn test_shiftby_uneven_tasks() {
     }
 
     // Spawn MAX_TASKS enqueuer tasks
-    for _ in 0..MAX_TASKS*2 {
+    for _ in 0..MAX_TASKS * 2 {
         let rb = Arc::clone(&rb);
         let enq_handler = spawn_buffer_task(
             ShardPolicy::ShiftBy {
                 initial_index: None,
-                shift: MAX_TASKS * 2
+                shift: MAX_TASKS * 2,
             },
             async move {
                 let rb = rb.clone();
@@ -523,7 +523,6 @@ async fn test_shiftby_uneven_tasks() {
 
     assert_eq!(2 * MAX_ITEMS * MAX_TASKS * 2, items_taken);
 }
-
 
 #[tokio::test(flavor = "current_thread")]
 async fn test_cft_policy() {

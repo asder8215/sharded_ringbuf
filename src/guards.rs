@@ -5,7 +5,7 @@
 
 // /// This is a guard for all the shards in LFShardedRingBuf struct
 // /// Implemented to make certain functions cancel-safe
-// /// 
+// ///
 // /// NOTE: These guards can't make it cancel safe :/
 // /// So all of these is just fluff
 // pub(crate) struct ShardLockGuard<'a> {

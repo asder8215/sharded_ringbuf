@@ -403,7 +403,7 @@ async fn test_shiftby_uneven_tasks() {
         let handler = spawn_buffer_task(
             ShardPolicy::ShiftBy {
                 initial_index: None,
-                shift: MAX_TASKS
+                shift: MAX_TASKS,
             },
             async move {
                 let rb = rb.clone();
@@ -422,12 +422,12 @@ async fn test_shiftby_uneven_tasks() {
     }
 
     // Spawn MAX_TASKS enqueuer tasks
-    for _ in 0..MAX_TASKS*2 {
+    for _ in 0..MAX_TASKS * 2 {
         let rb = Arc::clone(&rb);
         let enq_handler = spawn_buffer_task(
             ShardPolicy::ShiftBy {
                 initial_index: None,
-                shift: MAX_TASKS * 2
+                shift: MAX_TASKS * 2,
             },
             async move {
                 let rb = rb.clone();
