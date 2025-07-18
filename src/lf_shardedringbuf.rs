@@ -263,13 +263,13 @@ impl<T> LFShardedRingBuf<T> {
                 let task_node = unsafe { &*get_task_node().0 };
                 match acquire {
                     Acquire::Enqueue => {
-                        while !task_node.is_assigned.load(Ordering::Relaxed) {
+                        while !task_node.is_assigned.load(Ordering::Relaxed) && !self.is_shard_full(task_node.shard_ind.load(Ordering::Relaxed)){
                             yield_now().await;
                         }
                         task_node.shard_ind.load(Ordering::Relaxed)
                     }
                     Acquire::Dequeue => {
-                        while !task_node.is_assigned.load(Ordering::Relaxed) {
+                        while !task_node.is_assigned.load(Ordering::Relaxed) && !self.is_shard_empty(task_node.shard_ind.load(Ordering::Relaxed)) {
                             if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
                                 return 0;
                             }
