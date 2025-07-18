@@ -1,9 +1,9 @@
 use crate::{
     LFShardedRingBuf, ShardPolicy, TaskRole,
+    guards::TaskDoneGuard,
     shard_policies::ShardPolicyKind,
     task_locals::{
-        SHARD_INDEX, SHARD_POLICY, SHIFT, TASK_NODE, get_shard_ind, set_shard_ind, set_task_done,
-        set_task_node,
+        SHARD_INDEX, SHARD_POLICY, SHIFT, TASK_NODE, get_shard_ind, set_shard_ind, set_task_node,
     },
     task_node::{TaskNode, TaskNodePtr},
 };
@@ -233,15 +233,6 @@ where
     }
 }
 
-/// ⚠️ **Warning:** This function is **NOT** cancel-safe.
-///
-/// It won't cause a memory leak because the assigner task and LFShardedRingBuf<T>
-/// will clean up all task nodes on termination or on drop, but it causes stale task nodes
-/// to be left in the task list, which are not marked done and the assigner task is unable
-/// to clean or unpair the opposing enqueuer/dequeuer task which may or may not be cancelled
-/// as well. If cancel-safety is critical to you, use `spawn_with_buffer_task` or
-/// `rt_spawn_with_buffer_task` and the best following `ShardPolicy`` for your situation.
-///
 /// This is spawning with a new policy called CFT, aka Completely Fair Tasks. It uses a
 /// "smart task" called the assigner via `spawn_assigner()` which handles all pinning of
 /// enqueuer tasks to dequeuer tasks to a shard for you. Task registration to the list is
@@ -386,30 +377,17 @@ where
                         }
                     }
 
+                    // guard is used to mark the done flag as done if future aborts or gets completed
+                    let _guard = TaskDoneGuard::get_done(unsafe { &(&*task_node_ptr.0).is_done });
+
                     // do whatever the user wants us to do with the future
-                    let val = fut.await;
-
-                    // mark that the task is done once the future is over
-                    set_task_done();
-
-                    // return the future value
-                    val
+                    fut.await
                 }),
             ),
         ),
     ))
 }
 
-/// ⚠️ **Warning:** This function is **NOT** cancel-safe. The JoinHandle should neither
-/// be aborted or the future provided should have no concern about cancelling.
-///
-/// In detail: It won't cause a memory leak because the assigner task and LFShardedRingBuf<T>
-/// will clean up all task nodes on termination or on drop, but it causes stale task nodes
-/// to be left in the task list, which are not marked done and the assigner task is unable
-/// to clean or unpair the opposing enqueuer/dequeuer task which may or may not be cancelled
-/// as well. If cancel-safety is critical to you, use `spawn_with_buffer_task` or
-/// `rt_spawn_with_buffer_task` and the best following `ShardPolicy`` for your situation.
-///
 /// This is spawning with a user provided runtime with a new policy called CFT,
 /// aka Completely Fair Tasks. It uses a "smart task" called the assigner via
 /// `spawn_assigner()` which handles all pinning of enqueuer tasks to dequeuer tasks
@@ -562,24 +540,17 @@ where
                         }
                     }
 
+                    // guard is used to mark the done flag as done if future aborts or gets completed
+                    let _guard = TaskDoneGuard::get_done(unsafe { &(&*task_node_ptr.0).is_done });
+
                     // do whatever the user wants us to do with the future
-                    let val = fut.await;
-
-                    // mark that the task is done once the future is over
-                    set_task_done();
-
-                    // return the future value
-                    val
+                    fut.await
                 }),
             ),
         ),
     ))
 }
 
-/// ⚠️ **Warning:** This function is **NOT** cancel-safe.
-/// What I mean by cancel-safety is that the returned JoinHandle should not be
-/// aborted by any means. See below on note for graceful termination.
-///
 /// This is your helpful assigner task that handles assigning enqueuer tasks to dequeuer
 /// and vice versa in an optimal way.
 ///

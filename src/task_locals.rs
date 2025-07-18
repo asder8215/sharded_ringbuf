@@ -1,6 +1,6 @@
 use crate::{shard_policies::ShardPolicyKind, task_node::TaskNodePtr};
 use crossbeam_utils::CachePadded;
-use std::{cell::Cell, sync::atomic::Ordering};
+use std::cell::Cell;
 use tokio::task_local;
 
 task_local! {
@@ -69,17 +69,6 @@ pub(crate) fn set_task_node(task_ptr: CachePadded<TaskNodePtr>) {
         .try_with(|ptr| {
             ptr.set(task_ptr);
         })
-        .unwrap_or_else(|_| {
-            panic!(
-                "TASK_NODE is not initialized. Use `.spawn_buffer_task()` with CFT shard policy."
-            )
-        })
-}
-
-#[inline(always)]
-pub(crate) fn set_task_done() {
-    TASK_NODE
-        .try_with(|ptr| unsafe { (*ptr.get().0).is_done.store(true, Ordering::Relaxed) })
         .unwrap_or_else(|_| {
             panic!(
                 "TASK_NODE is not initialized. Use `.spawn_buffer_task()` with CFT shard policy."
