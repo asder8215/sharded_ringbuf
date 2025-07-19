@@ -7,7 +7,6 @@ use crate::{
     },
     task_node::{TaskNode, TaskNodePtr},
 };
-use crossbeam_utils::CachePadded;
 use fastrand::usize as frand;
 use std::{
     cell::Cell,
@@ -329,7 +328,8 @@ where
     R: Send + 'static,
 {
     spawn(TASK_NODE.scope(
-        Cell::new(CachePadded::new(TaskNodePtr(ptr::null_mut()))),
+        // Cell::new(CachePadded::new(TaskNodePtr(ptr::null_mut()))),
+        Cell::new(TaskNodePtr(ptr::null_mut())),
         SHARD_POLICY.scope(
             Cell::new(ShardPolicyKind::Cft),
             SHARD_INDEX.scope(
@@ -339,7 +339,8 @@ where
 
                     // Allocate for pointer and set it to the TASK_NODE for internal use in the future
                     let node = Box::new(TaskNode::new(role));
-                    let task_node_ptr = CachePadded::new(TaskNodePtr(Box::into_raw(node)));
+                    // let task_node_ptr = CachePadded::new(TaskNodePtr(Box::into_raw(node)));
+                    let task_node_ptr = TaskNodePtr(Box::into_raw(node));
                     set_task_node(task_node_ptr);
 
                     // This performs task registration in a thread sleeping loop
@@ -486,7 +487,8 @@ where
     R: Send + 'static,
 {
     rt.spawn(TASK_NODE.scope(
-        Cell::new(CachePadded::new(TaskNodePtr(ptr::null_mut()))),
+        // Cell::new(CachePadded::new(TaskNodePtr(ptr::null_mut()))),
+        Cell::new(TaskNodePtr(ptr::null_mut())),
         SHARD_POLICY.scope(
             Cell::new(ShardPolicyKind::Cft),
             SHARD_INDEX.scope(
@@ -496,7 +498,8 @@ where
 
                     // Allocate for pointer and set it to the TASK_NODE for internal use in the future
                     let node = Box::new(TaskNode::new(role));
-                    let task_node_ptr = CachePadded::new(TaskNodePtr(Box::into_raw(node)));
+                    // let task_node_ptr = CachePadded::new(TaskNodePtr(Box::into_raw(node)));
+                    let task_node_ptr = TaskNodePtr(Box::into_raw(node));
                     set_task_node(task_node_ptr);
                     let mut attempt: i32 = 0;
 

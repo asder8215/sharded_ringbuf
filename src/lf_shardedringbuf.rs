@@ -34,7 +34,8 @@ pub struct LFShardedRingBuf<T> {
     // CachePadded to prevent false sharing
     inner_rb: Box<[CachePadded<InnerRingBuffer<T>>]>,
     poisoned: AtomicBool,
-    pub(crate) head: CachePadded<AtomicPtr<TaskNode>>,
+    // pub(crate) head: CachePadded<AtomicPtr<TaskNode>>,
+    pub(crate) head: AtomicPtr<TaskNode>,
     pub(crate) assigner_terminate: AtomicBool,
 }
 
@@ -126,7 +127,8 @@ impl<T> LFShardedRingBuf<T> {
                 vec.into_boxed_slice()
             },
             poisoned: AtomicBool::new(false),
-            head: CachePadded::new(AtomicPtr::new(ptr::null_mut())),
+            // head: CachePadded::new(AtomicPtr::new(ptr::null_mut())),
+            head: AtomicPtr::new(ptr::null_mut()),
             assigner_terminate: AtomicBool::new(false),
         }
     }

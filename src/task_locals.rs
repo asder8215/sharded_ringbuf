@@ -1,5 +1,4 @@
 use crate::{shard_policies::ShardPolicyKind, task_node::TaskNodePtr};
-use crossbeam_utils::CachePadded;
 use std::cell::Cell;
 use tokio::task_local;
 
@@ -11,7 +10,8 @@ task_local! {
     /// shard policy for buffer
     pub(crate) static SHARD_POLICY: Cell<ShardPolicyKind>;
     /// The enqueuer/dequeuer task has a reference to its node
-    pub(crate) static TASK_NODE: Cell<CachePadded<TaskNodePtr>>;
+    // pub(crate) static TASK_NODE: Cell<CachePadded<TaskNodePtr>>;
+    pub(crate) static TASK_NODE: Cell<TaskNodePtr>;
     // The enqueuer/dequeuer task has a reference to its node
     // I tried this out to have `spawn_with_cft()` be cancel-free by having the
     // responsibility of freeing and changing the list assigned to the TaskNode
@@ -58,13 +58,17 @@ pub(crate) fn get_shift() -> usize {
 
 #[inline(always)]
 pub(crate) fn get_task_node() -> TaskNodePtr {
-    TASK_NODE.try_with(|ptr| *ptr.get()).unwrap_or_else(|_| {
+    // TASK_NODE.try_with(|ptr| *ptr.get()).unwrap_or_else(|_| {
+    //     panic!("TASK_NODE is not initialized. Use `.spawn_buffer_task()` with CFT shard policy.")
+    // })
+    TASK_NODE.try_with(|ptr| ptr.get()).unwrap_or_else(|_| {
         panic!("TASK_NODE is not initialized. Use `.spawn_buffer_task()` with CFT shard policy.")
     })
 }
 
 #[inline(always)]
-pub(crate) fn set_task_node(task_ptr: CachePadded<TaskNodePtr>) {
+// pub(crate) fn set_task_node(task_ptr: CachePadded<TaskNodePtr>) {
+pub(crate) fn set_task_node(task_ptr: TaskNodePtr) {
     TASK_NODE
         .try_with(|ptr| {
             ptr.set(task_ptr);

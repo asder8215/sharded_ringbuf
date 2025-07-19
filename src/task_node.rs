@@ -1,3 +1,4 @@
+use crossbeam_utils::CachePadded;
 use std::{
     ptr,
     sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize},
@@ -33,7 +34,9 @@ pub(crate) struct TaskNode {
     /// A static role of what the Task is
     pub(crate) role: TaskRole,
     /// If the task is completed (assigner reads, enq/deq writes)
-    pub(crate) is_done: AtomicBool,
+    /// This is cache padded because we want to separate any false sharing
+    /// from what the assigner writes and what the enq/deq writes
+    pub(crate) is_done: CachePadded<AtomicBool>,
     /// If the task is paired with deq/enq (assigner writes, enq/deq reads)
     pub(crate) is_paired: AtomicBool,
     /// Whether the shard_ind is written or not (assigner writes, enq/deq reads)
@@ -49,7 +52,8 @@ impl TaskNode {
     pub(crate) fn new(role: TaskRole) -> Self {
         Self {
             role,
-            is_done: AtomicBool::new(false),
+            // is_done: AtomicBool::new(false),
+            is_done: CachePadded::new(AtomicBool::new(false)),
             is_paired: AtomicBool::new(false),
             is_assigned: AtomicBool::new(false),
             shard_ind: AtomicUsize::new(0), // this 0 is just a placeholder value, enqueuer/dequeuer should only read here if is_assigned is set
