@@ -341,7 +341,6 @@ where
                     let node = Box::new(TaskNode::new(role));
                     let task_node_ptr = CachePadded::new(TaskNodePtr(Box::into_raw(node)));
                     set_task_node(task_node_ptr);
-                    let mut attempt: i32 = 0;
 
                     // This performs task registration in a thread sleeping loop
                     // This is inexpensive (just needs one successful compare swap)
@@ -369,11 +368,6 @@ where
                             .is_ok()
                         {
                             break;
-                        } else {
-                            let backoff_us = (1u64 << attempt.min(5)).min(100) as usize;
-                            let jitter = frand(0..=backoff_us) as u64;
-                            sleep(Duration::from_nanos(jitter));
-                            attempt = attempt.saturating_add(1); // Avoid overflow
                         }
                     }
 
@@ -581,7 +575,7 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
             // let mut current = buffer_clone.get_head();
             let mut current = buffer.get_head_relaxed();
 
-            let mut rebound_scan: Option<TaskNodePtr> = None;
+            // let mut rebound_scan: Option<TaskNodePtr> = None;
 
             // assigner can get out of this function once it complete cleaning up
             // the list and resets the termination signal to false
@@ -633,6 +627,8 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                         buffer.is_shard_empty(task_node.shard_ind.load(Ordering::Relaxed));
 
                     let pairs = shard_task_map.get_mut(shard_ind);
+
+                    // println!("I'm looking at {:?}", task_node);
 
                     // in the case that the enqueuer task is done and the shard its at is
                     // not empty, that means that a dequeuer task has not completed its
@@ -804,11 +800,13 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
 
                     // This is our second pointer, we use this to scan forward
                     // for a match to pair with
-                    // let mut scan_prev = current;
-                    let mut scan = match rebound_scan {
-                        None => TaskNodePtr(task_node.next.load(Ordering::Relaxed)),
-                        Some(rebound) => rebound,
-                    };
+                    let mut scan_prev = current;
+                    // let mut scan = match rebound_scan {
+                    //     None => TaskNodePtr(task_node.next.load(Ordering::Relaxed)),
+                    //     Some(rebound) => rebound,
+                    // };
+
+                    let mut scan = TaskNodePtr(task_node.next.load(Ordering::Relaxed));
 
                     while !scan.0.is_null() {
                         let scan_node = &*scan.0;
@@ -850,33 +848,33 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                     pairs.remove(&scan);
                                 }
                             }
-                            // let next = scan_node.next.load(Ordering::Relaxed);
-                            // let free_status = if scan_prev.0.is_null() {
-                            //     // Because task registration pre-pends at head, must be very careful here
-                            //     // we use CAS as result to see if we grabbed the head
-                            //     buffer
-                            //         .head
-                            //         .compare_exchange_weak(
-                            //             scan.0,
-                            //             next,
-                            //             Ordering::AcqRel,
-                            //             Ordering::Relaxed,
-                            //         )
-                            //         .is_ok()
-                            // } else {
-                            //     // because task registration happens at the beginning, this is always safe
-                            //     // to free
-                            //     (*scan_prev.0).next.store(next, Ordering::Relaxed);
-                            //     // (*scan_prev.0).next.store(next, Ordering::Release);
-                            //     true
-                            // };
+                            let next = scan_node.next.load(Ordering::Relaxed);
+                            let free_status = if scan_prev.0.is_null() {
+                                // Because task registration pre-pends at head, must be very careful here
+                                // we use CAS as result to see if we grabbed the head
+                                buffer
+                                    .head
+                                    .compare_exchange_weak(
+                                        scan.0,
+                                        next,
+                                        Ordering::AcqRel,
+                                        Ordering::Relaxed,
+                                    )
+                                    .is_ok()
+                            } else {
+                                // because task registration happens at the beginning, this is always safe
+                                // to free
+                                (*scan_prev.0).next.store(next, Ordering::Relaxed);
+                                // (*scan_prev.0).next.store(next, Ordering::Release);
+                                true
+                            };
 
-                            // // we can successfully free this item
-                            // if free_status {
-                            //     drop(Box::from_raw(scan.0));
-                            // }
-                            // scan = TaskNodePtr(next);
-                            scan = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
+                            // we can successfully free this item
+                            if free_status {
+                                drop(Box::from_raw(scan.0));
+                            }
+                            scan = TaskNodePtr(next);
+                            // scan = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
                             continue;
                         } else if scan_done && scan_role == TaskRole::Dequeue {
                             // We remove done pairs from the Hashmap/Hashset together
@@ -934,39 +932,39 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                 }
                             }
 
-                            // let next = scan_node.next.load(Ordering::Relaxed);
-                            // let free_status = if scan_prev.0.is_null() {
-                            //     // Because task registration pre-pends at head, must be very careful here
-                            //     // we use CAS as result to see if we grabbed the head
-                            //     buffer
-                            //         .head
-                            //         .compare_exchange_weak(
-                            //             scan.0,
-                            //             next,
-                            //             Ordering::AcqRel,
-                            //             Ordering::Relaxed,
-                            //         )
-                            //         .is_ok()
-                            // } else {
-                            //     // because task registration happens at the beginning, this is always safe
-                            //     // to free
-                            //     (*scan_prev.0).next.store(next, Ordering::Relaxed);
-                            //     true
-                            // };
+                            let next = scan_node.next.load(Ordering::Relaxed);
+                            let free_status = if scan_prev.0.is_null() {
+                                // Because task registration pre-pends at head, must be very careful here
+                                // we use CAS as result to see if we grabbed the head
+                                buffer
+                                    .head
+                                    .compare_exchange_weak(
+                                        scan.0,
+                                        next,
+                                        Ordering::AcqRel,
+                                        Ordering::Relaxed,
+                                    )
+                                    .is_ok()
+                            } else {
+                                // because task registration happens at the beginning, this is always safe
+                                // to free
+                                (*scan_prev.0).next.store(next, Ordering::Relaxed);
+                                true
+                            };
 
-                            // // we can successfully free this item
-                            // if free_status {
-                            //     drop(Box::from_raw(scan.0));
-                            // }
-                            // scan = TaskNodePtr(next);
-                            scan = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
+                            // we can successfully free this item
+                            if free_status {
+                                drop(Box::from_raw(scan.0));
+                            }
+                            scan = TaskNodePtr(next);
+                            // scan = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
                             continue;
                         }
 
                         // if it's paired skip forward, heck don't even let this
                         // be something that current can rebound to
                         if scan_paired {
-                            // scan_prev = TaskNodePtr(scan.0);
+                            scan_prev = TaskNodePtr(scan.0);
                             scan = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
                             continue;
                         }
@@ -994,7 +992,7 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                             {
                                 scan_node.is_assigned.store(false, Ordering::Relaxed);
                             } else {
-                                // scan_prev = TaskNodePtr(scan.0);
+                                scan_prev = TaskNodePtr(scan.0);
                                 scan = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
                                 continue;
                             }
@@ -1030,22 +1028,19 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
                                 pairs_map.insert(deq, enq);
 
                                 // This refers to the one you just paired or matched up with!
-                                // prev = scan;
-                                // current = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
-                                rebound_scan =
-                                    Some(TaskNodePtr(scan_node.next.load(Ordering::Relaxed)));
+                                prev = scan;
+                                current = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
                                 break;
                             }
                         }
-                        // scan_prev = scan;
+                        scan_prev = scan;
                         scan = TaskNodePtr(scan_node.next.load(Ordering::Relaxed));
                     }
 
                     // Couldn't find a pair to match enqueue/dequeue :(
-                    // if scan.0.is_null() {
-                    //     break;
-                    // }
-                    current = TaskNodePtr(task_node.next.load(Ordering::Relaxed));
+                    if scan.0.is_null() {
+                        break;
+                    }
                 }
             }
             yield_now().await;
