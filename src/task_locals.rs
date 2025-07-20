@@ -62,7 +62,7 @@ pub(crate) fn get_task_node() -> TaskNodePtr {
     //     panic!("TASK_NODE is not initialized. Use `.spawn_buffer_task()` with CFT shard policy.")
     // })
     TASK_NODE.try_with(|ptr| ptr.get()).unwrap_or_else(|_| {
-        panic!("TASK_NODE is not initialized. Use `.spawn_buffer_task()` with CFT shard policy.")
+        panic!("TASK_NODE is not initialized. Use `.spawn_with_cft()` with CFT shard policy.")
     })
 }
 
@@ -74,8 +74,6 @@ pub(crate) fn set_task_node(task_ptr: TaskNodePtr) {
             ptr.set(task_ptr);
         })
         .unwrap_or_else(|_| {
-            panic!(
-                "TASK_NODE is not initialized. Use `.spawn_buffer_task()` with CFT shard policy."
-            )
+            panic!("TASK_NODE is not initialized. Use `.spawn_with_cft()` with CFT shard policy.")
         })
 }

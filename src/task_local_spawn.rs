@@ -7,14 +7,11 @@ use crate::{
     },
     task_node::{TaskNode, TaskNodePtr},
 };
-use fastrand::usize as frand;
 use std::{
     cell::Cell,
     collections::{HashMap, HashSet},
     ptr,
     sync::{Arc, atomic::Ordering},
-    thread::sleep,
-    time::Duration,
 };
 use tokio::{
     runtime::Runtime,
@@ -30,6 +27,11 @@ use tokio::{
 ///
 /// Here's an example of how you would use it with `LFShardedRingBuf<T>`:
 /// ```rust
+/// use lf_shardedringbuf::LFShardedRingBuf;
+/// use task_node::TaskRole;
+/// use shard_policies:ShardPolicy;
+/// use task_local_spawn;
+///
 /// let CAPACITY: usize = 1024;
 /// let SHARDS: usize = 4;
 /// let ITEM_PER_TASK = 1000;
@@ -131,6 +133,11 @@ where
 ///
 /// Here's an example of how you might use it with `LFShardedRingBuf<T>`.
 /// ```rust
+/// use lf_shardedringbuf::LFShardedRingBuf;
+/// use task_node::TaskRole;
+/// use shard_policies:ShardPolicy;
+/// use task_local_spawn;
+///
 /// let CAPACITY: usize = 1024;
 /// let SHARDS: usize = 4;
 /// let ITEM_PER_TASK = 1000;
@@ -258,6 +265,12 @@ where
 /// Here's an example of how to use this function:
 ///
 /// ```rust
+/// use lf_shardedringbuf::{LFShardedRingBuf, terminate_assigner, spawn_assigner, TaskRole, ShardPolicy, spawn_with_cft};
+/// use tokio::task::JoinHandle;
+/// use std::sync::Arc;
+///
+/// #[tokio::main]
+/// async fn main() {
 /// const MAX_ITEMS:  usize = 100000;
 /// const MAX_SHARDS: usize = 10;
 /// const MAX_TASKS:  usize = 5;
@@ -268,7 +281,7 @@ where
 ///
 /// let assigner = spawn_assigner(rb.clone());
 ///
-/// Spawn MAX_TASKS dequeuer tasks
+/// // Spawn MAX_TASKS dequeuer tasks
 /// for _ in 0..MAX_TASKS {
 ///     let rb = Arc::clone(&rb);
 ///     let handler =
@@ -287,7 +300,7 @@ where
 ///     deq_threads.push(handler);
 /// }
 ///
-/// Spawn MAX_TASKS enqueuer tasks
+/// // Spawn MAX_TASKS enqueuer tasks
 /// for _ in 0..MAX_TASKS {
 ///     let rb = Arc::clone(&rb);
 ///     let enq_handler =
@@ -304,8 +317,8 @@ where
 ///     enq.await.unwrap();
 /// }
 ///
-/// guarantees that the dequeuer finish remaining jobs in the buffer
-/// before exiting
+/// // guarantees that the dequeuer finish remaining jobs in the buffer
+/// // before exiting
 /// rb.poison();
 ///
 /// let mut items_taken: usize = 0;
@@ -316,6 +329,7 @@ where
 /// terminate_assigner(rb.clone());
 ///
 /// let _ = assigner.await;
+/// }
 /// ```
 pub fn spawn_with_cft<F, T, R>(
     role: TaskRole,
@@ -408,6 +422,10 @@ where
 ///
 /// Here's an example of how to use this function:
 /// ```rust
+/// use lf_shardedringbuf::{LFShardedRingBuf, terminate_assigner, spawn_assigner, TaskRole, ShardPolicy, rt_spawn_with_cft};
+/// use tokio::task::JoinHandle;
+/// use std::sync::Arc;
+///
 /// const MAX_ITEMS:   usize = 100000;
 /// const MAX_SHARDS:  usize = 10;
 /// const MAX_TASKS:   usize = 5;
@@ -426,11 +444,11 @@ where
 ///
 /// let assigner = spawn_assigner(rb.clone());
 ///
-/// Spawn MAX_TASKS dequeuer tasks
+/// // Spawn MAX_TASKS dequeuer tasks
 /// for _ in 0..MAX_TASKS {
 ///     let rb = Arc::clone(&rb);
 ///     let handler =
-///         rt_spawn_with_cft::<_, usize, usize>(runtime, TaskRole::Dequeue, rb.clone(), async move {
+///         rt_spawn_with_cft::<_, usize, usize>(&runtime, TaskRole::Dequeue, rb.clone(), async move {
 ///             let rb = rb.clone();
 ///             let mut counter: usize = 0;
 ///             loop {
@@ -445,11 +463,11 @@ where
 ///     deq_threads.push(handler);
 /// }
 ///
-/// Spawn MAX_TASKS enqueuer tasks
+/// // Spawn MAX_TASKS enqueuer tasks
 /// for _ in 0..MAX_TASKS {
 ///     let rb = Arc::clone(&rb);
 ///     let enq_handler =
-///         rt_spawn_with_cft::<_, usize, ()>(runtime, TaskRole::Enqueue, rb.clone(), async move {
+///         rt_spawn_with_cft::<_, usize, ()>(&runtime, TaskRole::Enqueue, rb.clone(), async move {
 ///             let rb = rb.clone();
 ///             for _i in 0..2 * MAX_ITEMS {
 ///                 rb.enqueue(20).await;
@@ -458,25 +476,30 @@ where
 ///     enq_threads.push(enq_handler);
 /// }
 ///
+/// runtime.block_on( async move{
 /// for enq in enq_threads {
 ///     enq.await.unwrap();
-/// }
+/// }});
 ///
-/// guarantees that the dequeuer finish remaining jobs in the buffer
-/// before exiting
+/// // guarantees that the dequeuer finish remaining jobs in the buffer
+/// // before exiting
 /// rb.poison();
 ///
 /// let mut items_taken: usize = 0;
+/// runtime.block_on( async move {
 /// while let Some(curr_thread) = deq_threads.pop() {
 ///     items_taken += curr_thread.await.unwrap();
-/// }
+/// }});
 ///
 /// terminate_assigner(rb.clone());
 ///
+/// runtime.block_on (async move {
 /// let _ = assigner.await;
+/// }
+/// );
 /// ```
 pub fn rt_spawn_with_cft<F, T, R>(
-    rt: Runtime,
+    rt: &Runtime,
     role: TaskRole,
     buffer: Arc<LFShardedRingBuf<T>>,
     fut: F,
@@ -497,19 +520,21 @@ where
                     let buffer = Arc::clone(&buffer);
 
                     // Allocate for pointer and set it to the TASK_NODE for internal use in the future
-                    let node = Box::new(TaskNode::new(role));
-                    // let task_node_ptr = CachePadded::new(TaskNodePtr(Box::into_raw(node)));
-                    let task_node_ptr = TaskNodePtr(Box::into_raw(node));
+                    let mut node = Box::new(TaskNode::new(role));
+                    let mut task_node_ptr = TaskNodePtr(node.as_mut() as *mut TaskNode);
                     set_task_node(task_node_ptr);
-                    let mut attempt: i32 = 0;
+                    // let mut attempt: i32 = 0;
 
-                    // This performs task registration in a thread sleeping loop
-                    // This is inexpensive (just needs one successful compare swap)
-                    // and helpful in the long run because
-                    // you want your tasks to be registered for the assigner to
-                    // to be able assign a shard to these tasks
+                    // This performs task registration in a yield now loop
+                    // if the task wasn't able to be registered into the list
+                    // it can do it later down the line when there are less
+                    // task fighting to insert at head and the assigner is more
+                    // likely to work on areas besides the head.
+                    // CANCEL SAFETY: yield_now() cancelling here means
+                    // that the node was not inserted into the linked list
+                    // and the Box Drop method is applied deallocating the node for me
                     loop {
-                        let current = buffer.get_head(); // get head with Relaxed Memory ordering
+                        let current = buffer.get_head_relaxed(); // get head with Relaxed Memory ordering
                         // The cool thing about this below is that the next ptr for
                         // the task node ptr depends on that compare exchange for memory
                         // visibility, so this relaxed ordering is synchronized properly
@@ -530,12 +555,18 @@ where
                         {
                             break;
                         } else {
-                            let backoff_us = (1u64 << attempt.min(5)).min(100) as usize;
-                            let jitter = frand(0..=backoff_us) as u64;
-                            sleep(Duration::from_nanos(jitter));
-                            attempt = attempt.saturating_add(1); // Avoid overflow
+                            // let backoff_us = (1u64 << attempt.min(5)).min(100) as usize;
+                            // let jitter = frand(0..=backoff_us) as u64;
+                            // sleep(Duration::from_nanos(jitter));
+                            // attempt = attempt.saturating_add(1); // Avoid overflow
+                            yield_now().await;
                         }
                     }
+
+                    // We allocate memory for the node because we want the
+                    // assigner to have full control over deleting this node
+                    // when it is done!
+                    task_node_ptr = TaskNodePtr(Box::into_raw(node));
 
                     // guard is used to mark the done flag as done if future aborts or gets completed
                     let _guard = TaskDoneGuard::get_done(unsafe { &(&*task_node_ptr.0).is_done });
@@ -575,10 +606,11 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<LFShardedRingBuf<T>>) -> JoinHandl
         let mut pairs_map: HashMap<TaskNodePtr, TaskNodePtr> = HashMap::new();
         loop {
             let mut prev = TaskNodePtr(ptr::null_mut());
-            // let mut current = buffer_clone.get_head();
-            let mut current = buffer.get_head_relaxed();
 
-            // let mut rebound_scan: Option<TaskNodePtr> = None;
+            // head can be claimed in a relaxed manner (doesn't matter if we start
+            // off with a stale head because we'll eventually handle those nodes
+            // at another point)
+            let mut current = buffer.get_head_relaxed();
 
             // assigner can get out of this function once it complete cleaning up
             // the list and resets the termination signal to false

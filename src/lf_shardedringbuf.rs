@@ -139,7 +139,6 @@ impl<T> LFShardedRingBuf<T> {
     /// have access to any of these TaskNodes
     #[inline(always)]
     pub(crate) fn get_head(&self) -> TaskNodePtr {
-        // TaskNodePtr(self.head.load(Ordering::Relaxed))
         TaskNodePtr(self.head.load(Ordering::Acquire))
     }
 
