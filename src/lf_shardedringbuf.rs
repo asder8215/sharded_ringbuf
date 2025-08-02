@@ -1,5 +1,4 @@
 use crate::{
-    // guards::ShardLockGuard, doesn't work :(
     guards::ShardLockGuard,
     shard_policies::ShardPolicyKind,
     task_locals::{get_shard_ind, get_shard_policy, get_shift, get_task_node, set_shard_ind},
@@ -8,6 +7,7 @@ use crate::{
 use crossbeam_utils::CachePadded;
 use fastrand::usize as frand;
 use std::{
+    cell::UnsafeCell,
     fmt::{Debug, Write},
     mem::MaybeUninit,
     ptr,
@@ -26,26 +26,35 @@ enum Acquire {
 /// A sharded ring (circular) buffer struct that can only be used in an *async environment*.
 #[derive(Debug)]
 pub struct LFShardedRingBuf<T> {
+    /// Total capacity of the buffer
     capacity: AtomicUsize,
-    // Used to determine which shard a thread-task pair should work on
-    // CachePadded to prevent false sharing
+    /// Used to determine which shard a thread-task pair should work on
+    /// CachePadded to prevent false sharing
     shard_locks: Box<[CachePadded<AtomicBool>]>,
-    // Multiple InnerRingBuffer structure based on num of shards
-    // CachePadded to prevent false sharing
+    /// Multiple InnerRingBuffer structure based on num of shards
+    /// CachePadded to prevent false sharing
     inner_rb: Box<[CachePadded<InnerRingBuffer<T>>]>,
+    /// Poison signal of the ring buffer
     poisoned: AtomicBool,
-    // pub(crate) head: CachePadded<AtomicPtr<TaskNode>>,
+
+    // The fields below are for CFT policy
+    /// The head of the TaskNode linked list for CFT
     pub(crate) head: AtomicPtr<TaskNode>,
+    /// Signals whether the assigner is spawned already or not
+    pub(crate) assigner_spawned: AtomicBool,
+    /// Signals whether the assigner is terminated or not
     pub(crate) assigner_terminate: AtomicBool,
 }
 
 // An inner ring buffer to contain the items, enqueue and dequeue index, and job counts for LFShardedRingBuf struct
 #[derive(Debug, Default)]
 struct InnerRingBuffer<T> {
-    items: Box<[AtomicPtr<MaybeUninit<T>>]>,
+    /// Box containing the content of the buffer
+    items: Box<[UnsafeCell<MaybeUninit<T>>]>,
+    /// Where to enqueue at in the Box
     enqueue_index: AtomicUsize,
+    /// Where to dequeue at in the Box
     dequeue_index: AtomicUsize,
-    job_count: AtomicUsize,
 }
 
 /// Implements the InnerRingBuffer functions
@@ -57,16 +66,12 @@ impl<T> InnerRingBuffer<T> {
             items: {
                 let mut vec = Vec::with_capacity(capacity);
                 for _i in 0..capacity {
-                    // vec.push(UnsafeCell::new(MaybeUninit::uninit()));
-                    vec.push(AtomicPtr::new(Box::into_raw(Box::new(
-                        MaybeUninit::uninit(),
-                    ))));
+                    vec.push(UnsafeCell::new(MaybeUninit::uninit()));
                 }
                 vec.into_boxed_slice()
             },
             enqueue_index: AtomicUsize::new(0),
             dequeue_index: AtomicUsize::new(0),
-            job_count: AtomicUsize::new(0),
         }
     }
 
@@ -74,8 +79,8 @@ impl<T> InnerRingBuffer<T> {
     /// indeed contain a valid item. Used in Drop Trait.
     #[inline(always)]
     fn is_item_in_shard(&self, item_ind: usize) -> bool {
-        let enqueue_ind = self.enqueue_index.load(Ordering::Relaxed);
-        let dequeue_ind = self.dequeue_index.load(Ordering::Relaxed);
+        let enqueue_ind = self.enqueue_index.load(Ordering::Relaxed) % self.items.len();
+        let dequeue_ind = self.dequeue_index.load(Ordering::Relaxed) % self.items.len();
 
         if enqueue_ind > dequeue_ind {
             item_ind < enqueue_ind && item_ind >= dequeue_ind
@@ -127,21 +132,25 @@ impl<T> LFShardedRingBuf<T> {
                 vec.into_boxed_slice()
             },
             poisoned: AtomicBool::new(false),
-            // head: CachePadded::new(AtomicPtr::new(ptr::null_mut())),
             head: AtomicPtr::new(ptr::null_mut()),
+            assigner_spawned: AtomicBool::new(false),
             assigner_terminate: AtomicBool::new(false),
         }
     }
 
-    /// Assigner task uses this to get the head of the linked list
-    /// Enq/Deq task also uses when spawned for task registration
-    /// This is private to the crate because a user should NOT
-    /// have access to any of these TaskNodes
-    #[inline(always)]
-    pub(crate) fn get_head(&self) -> TaskNodePtr {
-        TaskNodePtr(self.head.load(Ordering::Acquire))
-    }
+    // /// Assigner task uses this to get the head of the linked list
+    // /// Enq/Deq task also uses when spawned for task registration
+    // /// This is private to the crate because a user should NOT
+    // /// have access to any of these TaskNodes
+    // #[inline(always)]
+    // pub(crate) fn get_head(&self) -> TaskNodePtr {
+    //     TaskNodePtr(self.head.load(Ordering::Acquire))
+    // }
 
+    /// Assigner task uses this to get the head of the linked list in a
+    /// relaxed manner
+    /// Private to the crate because a user should NOT have access
+    /// to any of these TaskNodes
     #[inline(always)]
     pub(crate) fn get_head_relaxed(&self) -> TaskNodePtr {
         TaskNodePtr(self.head.load(Ordering::Relaxed))
@@ -227,12 +236,15 @@ impl<T> LFShardedRingBuf<T> {
     /// Acquire the specific shard
     #[inline(always)]
     fn acquire_shard(&self, shard_ind: usize) -> bool {
-        // self.shard_locks[shard_ind]
-        //     .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        //     .is_ok()
         self.shard_locks[shard_ind]
             .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
+    }
+
+    /// Release the occupation status of this shard atomically
+    #[inline(always)]
+    fn release_shard(&self, shard_ind: usize) {
+        self.shard_locks[shard_ind].store(false, Ordering::Release);
     }
 
     /// Helper function for a task to acquire a specific shard within
@@ -334,7 +346,9 @@ impl<T> LFShardedRingBuf<T> {
                 }
             }
 
-            if !matches!(get_shard_policy(), ShardPolicyKind::Cft) {
+            if matches!(get_shard_policy(), ShardPolicyKind::Pin) {
+                yield_now().await;
+            } else if !matches!(get_shard_policy(), ShardPolicyKind::Cft) {
                 // Move to the next index to check if item can be placed inside
                 current = (current + get_shift()) % shard_count;
                 spins += get_shift();
@@ -365,37 +379,23 @@ impl<T> LFShardedRingBuf<T> {
         current
     }
 
-    /// Increment num of jobs in shard by 1 and
-    /// release the occupation status of this shard atomically
-    #[inline(always)]
-    fn release_and_increment_shard(&self, shard_ind: usize) {
-        // doing this relaxed loading, release storing is faster
-        // than fetch_add + it's guaranteed that there's one writer
-        // modifying this shard's job_count
-        self.inner_rb[shard_ind].job_count.store(
-            self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) + 1,
-            Ordering::Release,
-        );
-        self.shard_locks[shard_ind].store(false, Ordering::Release);
-    }
-
     /// Grab inner ring buffer shard, enqueue the item, update the enqueue index
     #[inline(always)]
     fn enqueue_in_shard(&self, shard_ind: usize, item: T) {
         let inner = &self.inner_rb[shard_ind];
         // Ordering Relaxed can be used safely because this thread-task pair is the
         // only modifier of this index
-        let enqueue_index = inner.enqueue_index.load(Ordering::Relaxed);
-        // let item_cell = inner.items[enqueue_index].get();
-        let item_cell = inner.items[enqueue_index].load(Ordering::Relaxed);
+
+        // we use fetch add here because we want to obtain the previous value
+        // to dequeue while also decrementing this index (separate load and store
+        // incurs more cost)
+        let enqueue_index = inner.enqueue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
+        let item_cell = inner.items[enqueue_index].get();
         // SAFETY: Only one thread will perform this operation and write to this
         // item cell
         unsafe {
             (*item_cell).write(item);
         }
-        inner
-            .enqueue_index
-            .store((enqueue_index + 1) % inner.items.len(), Ordering::Relaxed);
     }
 
     /// Helper function to add an Option item to the RingBuffer
@@ -415,7 +415,7 @@ impl<T> LFShardedRingBuf<T> {
         }
 
         self.enqueue_in_shard(current, item);
-        self.release_and_increment_shard(current);
+        self.release_shard(current);
     }
 
     /// Adds an item of type T to the RingBuffer, *blocking* the thread until there is space to add the item.
@@ -431,33 +431,21 @@ impl<T> LFShardedRingBuf<T> {
         self.enqueue_item(item).await;
     }
 
-    /// Decrement num of jobs in shard by 1 and
-    /// Release the occupation status of this shard atomically
-    #[inline(always)]
-    fn release_and_decrement_shard(&self, shard_ind: usize) {
-        // doing this relaxed loading, release storing is faster
-        // than fetch_sub + it's guaranteed that there's one writer
-        // modifying this shard's job_count
-        self.inner_rb[shard_ind].job_count.store(
-            self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) - 1,
-            Ordering::Release,
-        );
-
-        self.shard_locks[shard_ind].store(false, Ordering::Release);
-    }
-
     /// Grab the inner ring buffer shard, dequeue the item, update the dequeue index
     #[inline(always)]
     fn dequeue_in_shard(&self, shard_ind: usize) -> T {
         let inner = &self.inner_rb[shard_ind];
-        let dequeue_index = inner.dequeue_index.load(Ordering::Relaxed);
+        // Ordering Relaxed can be used safely because this thread-task pair is the
+        // only modifier of this index
+
+        // we use fetch add here because we want to obtain the previous value
+        // to dequeue while also decrementing this index (separate load and store
+        // incurs more cost)
+        let dequeue_index = inner.dequeue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
+
         // SAFETY: Only one thread will perform this operation
         // And it's guaranteed that an item will exist here
-        let item =
-            unsafe { (*inner.items[dequeue_index].load(Ordering::Relaxed)).assume_init_read() };
-        inner
-            .dequeue_index
-            .store((dequeue_index + 1) % inner.items.len(), Ordering::Relaxed);
+        let item = unsafe { (*inner.items[dequeue_index].get()).assume_init_read() };
         item
     }
 
@@ -474,8 +462,33 @@ impl<T> LFShardedRingBuf<T> {
             return None;
         }
         let item = self.dequeue_in_shard(current);
-        self.release_and_decrement_shard(current);
+        // self.release_and_decrement_shard(current);
+        self.release_shard(current);
+
         Some(item)
+    }
+
+    /// Retrieves an item of type T from the RingBuffer if an item exists in the buffer.
+    /// If the ring buffer is set with a poisoned flag or received a poison pill,
+    /// this method will return None.
+    ///
+    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
+    ///
+    /// Space Complexity: O(1)
+    pub async fn dequeue_full(&self) -> Option<Vec<T>> {
+        let current = self.try_acquire_shard(Acquire::Dequeue).await;
+        if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
+            return None;
+        }
+        let mut vec_items = Vec::new();
+
+        while !self.is_shard_empty(current) {
+            let item = self.dequeue_in_shard(current);
+            vec_items.push(item);
+        }
+
+        self.release_shard(current);
+        Some(vec_items)
     }
 
     /// Sets the poison flag of the ring buffer to true. This will prevent enqueuers
@@ -556,16 +569,14 @@ impl<T> LFShardedRingBuf<T> {
     pub fn clear(&self) {
         // reset each shard's inner ring buffer
         for shard in 0..self.shard_locks.len() {
-            let mut drop_index = self.inner_rb[shard].dequeue_index.load(Ordering::Relaxed);
-            let stop_index = self.inner_rb[shard].enqueue_index.load(Ordering::Relaxed);
+            let inner = &self.inner_rb[shard];
+            let mut drop_index = inner.dequeue_index.load(Ordering::Relaxed) % inner.items.len();
+            let stop_index = inner.enqueue_index.load(Ordering::Relaxed) % inner.items.len();
             while drop_index != stop_index {
                 // SAFETY: This will only clear out initialized values that have not
                 // been dequeued. Note here that this method uses Relaxed loads.
                 unsafe {
-                    ptr::drop_in_place(
-                        (*self.inner_rb[shard].items[drop_index].load(Ordering::Relaxed))
-                            .as_mut_ptr(),
-                    )
+                    ptr::drop_in_place((*self.inner_rb[shard].items[drop_index].get()).as_mut_ptr())
                 }
                 drop_index = (drop_index + 1) % self.inner_rb[shard].items.len();
             }
@@ -575,7 +586,6 @@ impl<T> LFShardedRingBuf<T> {
             self.inner_rb[shard]
                 .dequeue_index
                 .store(0, Ordering::Relaxed);
-            self.inner_rb[shard].job_count.store(0, Ordering::Relaxed);
         }
     }
 
@@ -600,19 +610,15 @@ impl<T> LFShardedRingBuf<T> {
 
         // reset each shard's inner ring buffer
         for (shard_ind, _guard) in guards.into_iter().enumerate() {
-            let mut drop_index = self.inner_rb[shard_ind]
-                .dequeue_index
-                .load(Ordering::Acquire);
-            let stop_index = self.inner_rb[shard_ind]
-                .enqueue_index
-                .load(Ordering::Acquire);
+            let inner = &self.inner_rb[shard_ind];
+            let mut drop_index = inner.dequeue_index.load(Ordering::Acquire) % inner.items.len();
+            let stop_index = inner.enqueue_index.load(Ordering::Acquire) % inner.items.len();
             while drop_index != stop_index {
                 // SAFETY: This will only clear out initialized values that have not
                 // been dequeued.
                 unsafe {
                     ptr::drop_in_place(
-                        (*self.inner_rb[shard_ind].items[drop_index].load(Ordering::Relaxed))
-                            .as_mut_ptr(),
+                        (*self.inner_rb[shard_ind].items[drop_index].get()).as_mut_ptr(),
                     )
                 }
                 drop_index = (drop_index + 1) % self.inner_rb[shard_ind].items.len();
@@ -622,9 +628,6 @@ impl<T> LFShardedRingBuf<T> {
                 .store(0, Ordering::Release);
             self.inner_rb[shard_ind]
                 .dequeue_index
-                .store(0, Ordering::Release);
-            self.inner_rb[shard_ind]
-                .job_count
                 .store(0, Ordering::Release);
         }
     }
@@ -677,7 +680,18 @@ impl<T> LFShardedRingBuf<T> {
     /// Space Complexity: O(1)
     #[inline(always)]
     pub fn is_shard_empty(&self, shard_ind: usize) -> bool {
-        self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) == 0
+        let inner = &self.inner_rb[shard_ind];
+        // use these values as monotonic counter than indices
+        let (enq_ind, deq_ind) = (
+            inner.enqueue_index.load(Ordering::Relaxed),
+            inner.dequeue_index.load(Ordering::Relaxed),
+        );
+        let jobs = if enq_ind >= deq_ind {
+            enq_ind - deq_ind
+        } else {
+            enq_ind.wrapping_sub(deq_ind)
+        };
+        jobs == 0
     }
 
     /// Checks to see if a specific shard is empty in an async manner
@@ -690,7 +704,18 @@ impl<T> LFShardedRingBuf<T> {
         // acquire shard in a cancel safe manner
         ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
 
-        self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed) == 0
+        let inner = &self.inner_rb[shard_ind];
+        // use these values as monotonic counter than indices
+        let (enq_ind, deq_ind) = (
+            inner.enqueue_index.load(Ordering::Relaxed),
+            inner.dequeue_index.load(Ordering::Relaxed),
+        );
+        let jobs = if enq_ind >= deq_ind {
+            enq_ind - deq_ind
+        } else {
+            enq_ind.wrapping_sub(deq_ind)
+        };
+        jobs == 0
     }
 
     /// Checks if all shards are full
@@ -743,8 +768,19 @@ impl<T> LFShardedRingBuf<T> {
     /// Space Complexity: O(1)
     #[inline(always)]
     pub fn is_shard_full(&self, shard_ind: usize) -> bool {
-        self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed)
-            == self.inner_rb[shard_ind].items.len()
+        let inner = &self.inner_rb[shard_ind];
+        let item_len = inner.items.len();
+        // use these values as monotonic counter than indices
+        let (enq_ind, deq_ind) = (
+            inner.enqueue_index.load(Ordering::Relaxed),
+            inner.dequeue_index.load(Ordering::Relaxed),
+        );
+        let jobs = if enq_ind >= deq_ind {
+            enq_ind - deq_ind
+        } else {
+            enq_ind.wrapping_sub(deq_ind)
+        };
+        jobs == item_len
     }
 
     /// Checks to see if a specific shard is full in an async manner
@@ -757,8 +793,19 @@ impl<T> LFShardedRingBuf<T> {
         // acquire shard in a cancel safe manner
         ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
 
-        self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed)
-            == self.inner_rb[shard_ind].items.len()
+        let inner = &self.inner_rb[shard_ind];
+        let item_len = inner.items.len();
+        // use these values as monotonic counter than indices
+        let (enq_ind, deq_ind) = (
+            inner.enqueue_index.load(Ordering::Relaxed),
+            inner.dequeue_index.load(Ordering::Relaxed),
+        );
+        let jobs = if enq_ind >= deq_ind {
+            enq_ind - deq_ind
+        } else {
+            enq_ind.wrapping_sub(deq_ind)
+        };
+        jobs == item_len
     }
 
     /// Gets the enqueue index within a shard. Returns None if the shard
@@ -778,7 +825,7 @@ impl<T> LFShardedRingBuf<T> {
 
         // grab enq val
         let inner = &self.inner_rb[shard_ind];
-        let enq_ind = inner.enqueue_index.load(Ordering::Relaxed);
+        let enq_ind = inner.enqueue_index.load(Ordering::Relaxed) % inner.items.len();
 
         Some(enq_ind)
     }
@@ -800,7 +847,7 @@ impl<T> LFShardedRingBuf<T> {
 
         // grab enq val
         let inner = &self.inner_rb[shard_ind];
-        let enq_ind = inner.enqueue_index.load(Ordering::Relaxed);
+        let enq_ind = inner.enqueue_index.load(Ordering::Relaxed) % inner.items.len();
 
         Some(enq_ind)
     }
@@ -822,7 +869,7 @@ impl<T> LFShardedRingBuf<T> {
 
         // grab deq ind val
         let inner = &self.inner_rb[shard_ind];
-        let deq_ind = inner.dequeue_index.load(Ordering::Relaxed);
+        let deq_ind = inner.dequeue_index.load(Ordering::Relaxed) % inner.items.len();
 
         Some(deq_ind)
     }
@@ -844,7 +891,7 @@ impl<T> LFShardedRingBuf<T> {
 
         // grab deq ind val
         let inner = &self.inner_rb[shard_ind];
-        let deq_ind = inner.dequeue_index.load(Ordering::Relaxed);
+        let deq_ind = inner.dequeue_index.load(Ordering::Relaxed) % inner.items.len();
 
         Some(deq_ind)
     }
@@ -863,22 +910,17 @@ impl<T> LFShardedRingBuf<T> {
             return None;
         }
 
-        Some(self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed))
-    }
-
-    /// Gets the total number of jobs within each shard.
-    ///
-    /// Time Complexity: O(s) where s is the number of shards
-    ///
-    /// Space Complexity: O(s)
-    #[inline(always)]
-    pub fn get_job_count_total(&self) -> Vec<usize> {
-        let mut count = Vec::new();
-
-        for shard in &self.inner_rb {
-            count.push(shard.job_count.load(Ordering::Relaxed));
-        }
-        count
+        let inner = &self.inner_rb[shard_ind];
+        let (enq_count, deq_count) = (
+            inner.enqueue_index.load(Ordering::Relaxed),
+            inner.dequeue_index.load(Ordering::Relaxed),
+        );
+        let jobs = if enq_count >= deq_count {
+            enq_count - deq_count
+        } else {
+            enq_count.wrapping_sub(deq_count)
+        };
+        Some(jobs)
     }
 
     /// Gets the total number of jobs within a shard in an async manner.
@@ -896,19 +938,84 @@ impl<T> LFShardedRingBuf<T> {
         // acquire shard in a cancel safe manner
         ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
 
-        Some(self.inner_rb[shard_ind].job_count.load(Ordering::Relaxed))
+        let inner = &self.inner_rb[shard_ind];
+        let (enq_count, deq_count) = (
+            inner.enqueue_index.load(Ordering::Relaxed),
+            inner.dequeue_index.load(Ordering::Relaxed),
+        );
+        let jobs = if enq_count >= deq_count {
+            enq_count - deq_count
+        } else {
+            enq_count.wrapping_sub(deq_count)
+        };
+        Some(jobs)
+    }
+
+    /// Gets the total number of jobs within each shard.
+    ///
+    /// Time Complexity: O(s) where s is the number of shards
+    ///
+    /// Space Complexity: O(s)
+    #[inline(always)]
+    pub fn get_job_count_total(&self) -> Vec<usize> {
+        let mut count = Vec::new();
+
+        for shard in &self.inner_rb {
+            let (enq_count, deq_count) = (
+                shard.enqueue_index.load(Ordering::Relaxed),
+                shard.dequeue_index.load(Ordering::Relaxed),
+            );
+            let jobs = if enq_count >= deq_count {
+                enq_count - deq_count
+            } else {
+                enq_count.wrapping_sub(deq_count)
+            };
+            count.push(jobs);
+        }
+        count
+    }
+
+    /// Gets the total number of jobs within each shard in an async manner.
+    ///
+    /// Time Complexity: O(s) where s is the number of shards
+    ///
+    /// Space Complexity: O(s)
+    #[inline(always)]
+    pub async fn async_get_job_count_total(&self) -> Vec<usize> {
+        // Acquire all shards
+        // CANCEL SAFETY: When a future is aborted, it puts false back into the lock
+        let mut guards = Vec::new();
+        for shard in 0..self.shard_locks.len() {
+            let guard = ShardLockGuard::acquire(&self.shard_locks[shard]).await;
+            guards.push(guard);
+        }
+
+        let mut count = Vec::new();
+        // Neat thing here is that this for loop owns the guards, so it'll drop the
+        // guard for me when it goes to the next iteration
+        for (shard_ind, _guard) in guards.into_iter().enumerate() {
+            let shard = &self.inner_rb[shard_ind];
+            let (enq_count, deq_count) = (
+                shard.enqueue_index.load(Ordering::Relaxed),
+                shard.dequeue_index.load(Ordering::Relaxed),
+            );
+            let jobs = if enq_count >= deq_count {
+                enq_count - deq_count
+            } else {
+                enq_count.wrapping_sub(deq_count)
+            };
+            count.push(jobs);
+        }
+        count
     }
 
     /// Helper function to see if a given index inside of a shard does
     /// indeed contain a valid item
     #[inline(always)]
     fn is_item_in_shard(&self, item_ind: usize, shard_ind: usize) -> bool {
-        let enqueue_ind = self.inner_rb[shard_ind]
-            .enqueue_index
-            .load(Ordering::Relaxed);
-        let dequeue_ind = self.inner_rb[shard_ind]
-            .dequeue_index
-            .load(Ordering::Relaxed);
+        let inner = &self.inner_rb[shard_ind];
+        let enqueue_ind = inner.enqueue_index.load(Ordering::Relaxed) % inner.items.len();
+        let dequeue_ind = inner.dequeue_index.load(Ordering::Relaxed) % inner.items.len();
 
         if enqueue_ind > dequeue_ind {
             item_ind < enqueue_ind && item_ind >= dequeue_ind
@@ -950,7 +1057,7 @@ impl<T> LFShardedRingBuf<T> {
         // item index is in [dequeue ind, enqueue ind) + wraparound
         unsafe {
             if self.is_item_in_shard(item_ind, shard_ind) {
-                let val_ref = (*inner.items[item_ind].load(Ordering::Relaxed)).assume_init_ref();
+                let val_ref = (*inner.items[item_ind].get()).assume_init_ref();
                 Some(val_ref.clone())
             } else {
                 None
@@ -992,7 +1099,7 @@ impl<T> LFShardedRingBuf<T> {
         // item index is in [dequeue ind, enqueue ind) + wraparound
         unsafe {
             if self.is_item_in_shard(item_ind, shard_ind) {
-                let val_ref = (*inner.items[item_ind].load(Ordering::Relaxed)).assume_init_ref();
+                let val_ref = (*inner.items[item_ind].get()).assume_init_ref();
                 Some(val_ref.clone())
             } else {
                 None
@@ -1029,8 +1136,7 @@ impl<T> LFShardedRingBuf<T> {
             // item index is in [dequeue ind, enqueue ind) + wraparound
             for i in 0..inner.items.len() {
                 if self.is_item_in_shard(i, shard_ind) {
-                    let val_ref =
-                        unsafe { (*inner.items[i].load(Ordering::Relaxed)).assume_init_ref() };
+                    let val_ref = unsafe { (*inner.items[i].get()).assume_init_ref() };
                     vec.push(Some(val_ref.clone()))
                 } else {
                     vec.push(None);
@@ -1075,8 +1181,7 @@ impl<T> LFShardedRingBuf<T> {
             // item index is in [dequeue ind, enqueue ind) + wraparound
             for i in 0..inner.items.len() {
                 if self.is_item_in_shard(i, shard_ind) {
-                    let val_ref =
-                        unsafe { (*inner.items[i].load(Ordering::Relaxed)).assume_init_ref() };
+                    let val_ref = unsafe { (*inner.items[i].get()).assume_init_ref() };
                     vec.push(Some(val_ref.clone()))
                 } else {
                     vec.push(None);
@@ -1118,8 +1223,7 @@ impl<T> LFShardedRingBuf<T> {
                 // item index is in [dequeue ind, enqueue ind) + wraparound
                 for i in 0..shard.items.len() {
                     if self.is_item_in_shard(i, shard_ind) {
-                        let val_ref =
-                            unsafe { (*shard.items[i].load(Ordering::Relaxed)).assume_init_ref() };
+                        let val_ref = unsafe { (*shard.items[i].get()).assume_init_ref() };
                         shard_vec.push(Some(val_ref.clone()))
                     } else {
                         shard_vec.push(None);
@@ -1173,8 +1277,7 @@ impl<T> LFShardedRingBuf<T> {
                 // item index is in [dequeue ind, enqueue ind) + wraparound
                 for i in 0..shard.items.len() {
                     if self.is_item_in_shard(i, shard_ind) {
-                        let val_ref =
-                            unsafe { (*shard.items[i].load(Ordering::Relaxed)).assume_init_ref() };
+                        let val_ref = unsafe { (*shard.items[i].get()).assume_init_ref() };
                         shard_vec.push(Some(val_ref.clone()))
                     } else {
                         shard_vec.push(None);
@@ -1218,16 +1321,13 @@ impl<T> LFShardedRingBuf<T> {
         for i in 0..inner_shard.items.len() {
             if i == inner_shard.items.len() - 1 {
                 if self.is_item_in_shard(i, shard_ind) {
-                    let val_ref = unsafe {
-                        (*inner_shard.items[i].load(Ordering::Relaxed)).assume_init_ref()
-                    };
+                    let val_ref = unsafe { (*inner_shard.items[i].get()).assume_init_ref() };
                     write!(print_buffer, "{val_ref:?}").unwrap();
                 } else {
                     write!(print_buffer, "<uninit>").unwrap();
                 }
             } else if self.is_item_in_shard(i, shard_ind) {
-                let val_ref =
-                    unsafe { (*inner_shard.items[i].load(Ordering::Relaxed)).assume_init_ref() };
+                let val_ref = unsafe { (*inner_shard.items[i].get()).assume_init_ref() };
                 write!(print_buffer, "{val_ref:?}, ").unwrap();
             } else {
                 write!(print_buffer, "<uninit>, ").unwrap();
@@ -1271,16 +1371,13 @@ impl<T> LFShardedRingBuf<T> {
         for i in 0..inner_shard.items.len() {
             if i == inner_shard.items.len() - 1 {
                 if self.is_item_in_shard(i, shard_ind) {
-                    let val_ref = unsafe {
-                        (*inner_shard.items[i].load(Ordering::Relaxed)).assume_init_ref()
-                    };
+                    let val_ref = unsafe { (*inner_shard.items[i].get()).assume_init_ref() };
                     write!(print_buffer, "{val_ref:?}").unwrap();
                 } else {
                     write!(print_buffer, "<uninit>").unwrap();
                 }
             } else if self.is_item_in_shard(i, shard_ind) {
-                let val_ref =
-                    unsafe { (*inner_shard.items[i].load(Ordering::Relaxed)).assume_init_ref() };
+                let val_ref = unsafe { (*inner_shard.items[i].get()).assume_init_ref() };
                 write!(print_buffer, "{val_ref:?}, ").unwrap();
             } else {
                 write!(print_buffer, "<uninit>, ").unwrap();
@@ -1321,17 +1418,13 @@ impl<T> LFShardedRingBuf<T> {
             for i in 0..inner_shard.items.len() {
                 if i == inner_shard.items.len() - 1 {
                     if self.is_item_in_shard(i, shard_ind) {
-                        let val_ref = unsafe {
-                            (*inner_shard.items[i].load(Ordering::Relaxed)).assume_init_ref()
-                        };
+                        let val_ref = unsafe { (*inner_shard.items[i].get()).assume_init_ref() };
                         write!(print_buffer, "{val_ref:?}").unwrap();
                     } else {
                         write!(print_buffer, "<uninit>").unwrap();
                     }
                 } else if self.is_item_in_shard(i, shard_ind) {
-                    let val_ref = unsafe {
-                        (*inner_shard.items[i].load(Ordering::Relaxed)).assume_init_ref()
-                    };
+                    let val_ref = unsafe { (*inner_shard.items[i].get()).assume_init_ref() };
                     write!(print_buffer, "{val_ref:?}, ").unwrap();
                 } else {
                     write!(print_buffer, "<uninit>, ").unwrap();
@@ -1380,17 +1473,13 @@ impl<T> LFShardedRingBuf<T> {
             for i in 0..inner_shard.items.len() {
                 if i == inner_shard.items.len() - 1 {
                     if self.is_item_in_shard(i, shard_ind) {
-                        let val_ref = unsafe {
-                            (*inner_shard.items[i].load(Ordering::Relaxed)).assume_init_ref()
-                        };
+                        let val_ref = unsafe { (*inner_shard.items[i].get()).assume_init_ref() };
                         write!(print_buffer, "{val_ref:?}").unwrap();
                     } else {
                         write!(print_buffer, "<uninit>").unwrap();
                     }
                 } else if self.is_item_in_shard(i, shard_ind) {
-                    let val_ref = unsafe {
-                        (*inner_shard.items[i].load(Ordering::Relaxed)).assume_init_ref()
-                    };
+                    let val_ref = unsafe { (*inner_shard.items[i].get()).assume_init_ref() };
                     write!(print_buffer, "{val_ref:?}, ").unwrap();
                 } else {
                     write!(print_buffer, "<uninit>, ").unwrap();
@@ -1406,6 +1495,12 @@ impl<T> LFShardedRingBuf<T> {
         print!("{print_buffer}");
     }
 }
+
+unsafe impl<T> Sync for LFShardedRingBuf<T> {}
+unsafe impl<T> Send for LFShardedRingBuf<T> {}
+
+unsafe impl<T> Sync for InnerRingBuffer<T> {}
+unsafe impl<T> Send for InnerRingBuffer<T> {}
 
 // Destructor trait for LFShardedRingBuf just in case it gets dropped and its
 // list of AtomicPtrs are not fully cleaned up yet.
@@ -1430,15 +1525,19 @@ impl<T> Drop for InnerRingBuffer<T> {
     fn drop(&mut self) {
         for item_ind in 0..self.items.len() {
             if self.is_item_in_shard(item_ind) {
-                let ptr = self.items[item_ind].load(Ordering::Relaxed);
+                let ptr = self.items[item_ind].get();
                 if !ptr.is_null() {
-                    // We drop both the heap memory allocation and the item allocation
+                    // SAFETY: I know that if the ptr isn't null, that means there is
+                    // an item here, so we drop both the heap memory allocation and the
+                    // item allocation
                     unsafe {
                         let _ = Box::from_raw(ptr as *mut T);
                     }
                 } else {
-                    // Just drop the heap memory allocation (MaybeUninit<T> does not impl Drop
-                    // so I don't have to worry about dropping uninitialized data)
+                    // SAFETY: If the ptr is null, then there's no item here, but we still
+                    // need to drop the heap allocation for the MaybeUninit
+                    // Because MaybeUninit<T> doesn't implement drop itself on T,
+                    // then that's okay to use a Box here to just drop the MaybeUninit.
                     unsafe {
                         let _ = Box::from_raw(ptr);
                     }
