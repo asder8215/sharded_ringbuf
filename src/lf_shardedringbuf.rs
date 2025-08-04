@@ -13,7 +13,7 @@ use std::{
     ptr,
     sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
 };
-use tokio::task::yield_now;
+use tokio::{runtime::{Handle, RuntimeMetrics}, sync::Notify, task::yield_now};
 
 // Enum used in try_acquire_shard to determine if task
 // is enqueue or dequeue
@@ -37,6 +37,8 @@ pub struct LFShardedRingBuf<T> {
     /// Poison signal of the ring buffer
     poisoned: AtomicBool,
 
+    job_space_notif: Notify,
+
     // The fields below are for CFT policy
     /// The head of the TaskNode linked list for CFT
     pub(crate) head: AtomicPtr<TaskNode>,
@@ -46,7 +48,7 @@ pub struct LFShardedRingBuf<T> {
     pub(crate) assigner_terminate: AtomicBool,
 }
 
-// An inner ring buffer to contain the items, enqueue and dequeue index, and job counts for LFShardedRingBuf struct
+// An inner ring buffer to contain the items, enqueue and dequeue index for LFShardedRingBuf struct
 #[derive(Debug, Default)]
 struct InnerRingBuffer<T> {
     /// Box containing the content of the buffer
@@ -132,6 +134,7 @@ impl<T> LFShardedRingBuf<T> {
                 vec.into_boxed_slice()
             },
             poisoned: AtomicBool::new(false),
+            job_space_notif: Notify::new(),
             head: AtomicPtr::new(ptr::null_mut()),
             assigner_spawned: AtomicBool::new(false),
             assigner_terminate: AtomicBool::new(false),
@@ -405,17 +408,52 @@ impl<T> LFShardedRingBuf<T> {
     ///
     /// Space Complexity: O(1)
     async fn enqueue_item(&self, item: T) {
-        // acquire shard
-        let current = self.try_acquire_shard(Acquire::Enqueue).await;
+        // If we have multiple shards and multiple threads, the more optimal route is to 
+        // use shard locking to prevent false sharing while potentially having 
+        // good cache locality access per thread
+        if self.get_num_of_shards() != 1 || Handle::current().metrics().num_workers() != 1 {
+            // acquire shard
+            let current = self.try_acquire_shard(Acquire::Enqueue).await;
 
-        // If poisoned, do not enqueue this item.
-        if self.poisoned.load(Ordering::Relaxed) {
-            println!("Can't enqueue anymore. Ring buffer is poisoned.");
-            return;
+            // If poisoned, do not enqueue this item.
+            if self.poisoned.load(Ordering::Relaxed) {
+                println!("Can't enqueue anymore. Ring buffer is poisoned.");
+                return;
+            }
+
+            self.enqueue_in_shard(current, item);
+            self.release_shard(current);
         }
+        // Otherwise, the user is likely going through a single dequeuer route
+        // (MPSC or SPSC), so we can just approach this in a lock free slot
+        // based manner, context switching if shard is full
+        else {
+            // If poisoned, do not enqueue this item.
+            if self.poisoned.load(Ordering::Relaxed) {
+                println!("Can't enqueue anymore. Ring buffer is poisoned.");
+                return;
+            }
+            loop {
+                let inner = &self.inner_rb[0];
+                let enq_counter = inner.enqueue_index.load(Ordering::Acquire);
+                let deq_counter = inner.dequeue_index.load(Ordering::Acquire);
+                let jobs = enq_counter.wrapping_sub(deq_counter);
 
-        self.enqueue_in_shard(current, item);
-        self.release_shard(current);
+                if jobs != inner.items.len() {
+                    let enqueue_index =
+                        inner.enqueue_index.fetch_add(1, Ordering::AcqRel) % inner.items.len();
+                    let item_cell = inner.items[enqueue_index].get();
+                    unsafe {
+                        (*item_cell).write(item);
+                    }
+                    return;
+                } else {
+                    // we're using a notify for the enqueuer
+                    // it minimizes the number times we context switch
+                    self.job_space_notif.notified().await;
+                }
+            }
+        }
     }
 
     /// Adds an item of type T to the RingBuffer, *blocking* the thread until there is space to add the item.
@@ -446,6 +484,12 @@ impl<T> LFShardedRingBuf<T> {
         // SAFETY: Only one thread will perform this operation
         // And it's guaranteed that an item will exist here
         let item = unsafe { (*inner.items[dequeue_index].get()).assume_init_read() };
+
+        // SAFETY: We just copied the item by value, so we no longer need to hold
+        // this item in memory
+        unsafe {
+            ptr::drop_in_place((*inner.items[dequeue_index].get()).as_mut_ptr());
+        }
         item
     }
 
@@ -457,15 +501,56 @@ impl<T> LFShardedRingBuf<T> {
     ///
     /// Space Complexity: O(1)
     pub async fn dequeue(&self) -> Option<T> {
-        let current = self.try_acquire_shard(Acquire::Dequeue).await;
-        if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
-            return None;
-        }
-        let item = self.dequeue_in_shard(current);
-        // self.release_and_decrement_shard(current);
-        self.release_shard(current);
+        // If we have multiple shards or multiple worker threads, 
+        // the more optimal route is to use shard locking to prevent
+        // false sharing while potentially having good cache locality access
+        // Moreover this prevents dequeuer tasks from stepping on each other
+        // for a job in a single threaded case
+        if self.get_num_of_shards() != 1 || Handle::current().metrics().num_workers() != 1 {
+            let current = self.try_acquire_shard(Acquire::Dequeue).await;
+            if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
+                return None;
+            }
+            let item = self.dequeue_in_shard(current);
+            self.release_shard(current);
 
-        Some(item)
+            Some(item)
+        }
+        // Otherwise, the user is likely going through a single dequeuer route
+        // (MPSC or SPSC), so we can just approach this in a lock free slot
+        // based manner, context switching if no job is available
+        else {
+            loop {
+                if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
+                    return None;
+                }
+
+                let inner = &self.inner_rb[0];
+                let enq_counter = inner.enqueue_index.load(Ordering::Acquire);
+                let deq_counter = inner.dequeue_index.load(Ordering::Acquire);
+                let jobs = enq_counter.wrapping_sub(deq_counter);
+
+                if jobs != 0 {
+                    let dequeue_index =
+                        inner.dequeue_index.fetch_add(1, Ordering::AcqRel) % inner.items.len();
+                    // SAFETY: Only one thread will claim this slot and perform this operation
+                    // And it's guaranteed that an item will exist here
+                    let item = unsafe { (*inner.items[dequeue_index].get()).assume_init_read() };
+                    // SAFETY: We just copied the item by value, so we no longer need to hold
+                    // this item in memory
+                    unsafe {
+                        ptr::drop_in_place((*inner.items[dequeue_index].get()).as_mut_ptr());
+                    }
+                    self.job_space_notif.notify_one();
+                    return Some(item);
+                } else {
+                    if !self.is_full() {
+                        self.job_space_notif.notify_one();
+                    }
+                    yield_now().await;
+                }
+            }
+        }
     }
 
     /// Retrieves an item of type T from the RingBuffer if an item exists in the buffer.
@@ -476,19 +561,87 @@ impl<T> LFShardedRingBuf<T> {
     ///
     /// Space Complexity: O(1)
     pub async fn dequeue_full(&self) -> Option<Vec<T>> {
-        let current = self.try_acquire_shard(Acquire::Dequeue).await;
-        if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
-            return None;
-        }
-        let mut vec_items = Vec::new();
+        // If we have multiple shards or multiple worker threads, 
+        // the more optimal route is to use shard locking to prevent
+        // false sharing while potentially having good cache locality access
+        // Moreover this prevents dequeuer tasks from stepping on each other
+        // for a job in a single threaded case
+        if self.get_num_of_shards() != 1 || Handle::current().metrics().num_workers() != 1 {
+        // if self.get_num_of_shards() != 1 {
+            let current = self.try_acquire_shard(Acquire::Dequeue).await;
+            if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
+                return None;
+            }
+            let mut vec_items = Vec::new();
 
-        while !self.is_shard_empty(current) {
-            let item = self.dequeue_in_shard(current);
-            vec_items.push(item);
-        }
+            while !self.is_shard_empty(current) {
+                let item = self.dequeue_in_shard(current);
+                vec_items.push(item);
+            }
 
-        self.release_shard(current);
-        Some(vec_items)
+            self.release_shard(current);
+            Some(vec_items)
+        }
+        // Otherwise, the user is likely going through a single dequeuer route
+        // (MPSC or SPSC), so we can just approach this in a lock free slot
+        // based manner, context switching if no job is available
+        else {
+            loop {
+                if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
+                    return None;
+                }
+
+                let inner = &self.inner_rb[0];
+                let inner_items_len = inner.items.len();
+                let mut vec_items = Vec::new();
+                // we use this loop here because it's possible for multiple looping dequeuers to exist
+                // inside 1 shard which means we need to keep re-acquiring the enq_counter and deq_counter
+                // to make sure there's any jobs left inside for it to be truly lock free slot-based
+                // however doing this multiple looping dequeuers on a single shard is really slow
+                // and causes cache invalidation because threads can write to the same cache line
+                // due  to assume_init_read()
+                loop {
+                    if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
+                        return None;
+                    }
+                    let enq_counter = inner.enqueue_index.load(Ordering::Acquire);
+                    let deq_counter = inner.dequeue_index.load(Ordering::Acquire);
+                    let jobs = enq_counter.wrapping_sub(deq_counter);
+                    if jobs != 0 {
+                        let dequeue_index = inner.dequeue_index.compare_exchange_weak(
+                            deq_counter,
+                            deq_counter.wrapping_add(1),
+                            Ordering::AcqRel,
+                            Ordering::Relaxed,
+                        );
+                        if dequeue_index.is_ok() {
+                            let deq_ind = dequeue_index.unwrap() % inner_items_len;
+                            // SAFETY: Only one thread will claim this slot and perform this operation
+                            // And it's guaranteed that an item will exist here
+                            let item = unsafe { (*inner.items[deq_ind].get()).assume_init_read() };
+                            // SAFETY: We just copied the item by value, so we no longer need to hold
+                            // this item in memory
+                            unsafe {
+                                ptr::drop_in_place((*inner.items[deq_ind].get()).as_mut_ptr());
+                            }
+                            vec_items.push(item);
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
+                if !vec_items.is_empty() {
+                    self.job_space_notif.notify_one();
+                    return Some(vec_items);
+                } else if !self.is_full() {
+                    self.job_space_notif.notify_one();
+                }
+                yield_now().await;
+            }
+        }
     }
 
     /// Sets the poison flag of the ring buffer to true. This will prevent enqueuers
@@ -686,11 +839,7 @@ impl<T> LFShardedRingBuf<T> {
             inner.enqueue_index.load(Ordering::Relaxed),
             inner.dequeue_index.load(Ordering::Relaxed),
         );
-        let jobs = if enq_ind >= deq_ind {
-            enq_ind - deq_ind
-        } else {
-            enq_ind.wrapping_sub(deq_ind)
-        };
+        let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == 0
     }
 
@@ -710,11 +859,7 @@ impl<T> LFShardedRingBuf<T> {
             inner.enqueue_index.load(Ordering::Relaxed),
             inner.dequeue_index.load(Ordering::Relaxed),
         );
-        let jobs = if enq_ind >= deq_ind {
-            enq_ind - deq_ind
-        } else {
-            enq_ind.wrapping_sub(deq_ind)
-        };
+        let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == 0
     }
 
@@ -775,11 +920,7 @@ impl<T> LFShardedRingBuf<T> {
             inner.enqueue_index.load(Ordering::Relaxed),
             inner.dequeue_index.load(Ordering::Relaxed),
         );
-        let jobs = if enq_ind >= deq_ind {
-            enq_ind - deq_ind
-        } else {
-            enq_ind.wrapping_sub(deq_ind)
-        };
+        let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == item_len
     }
 
@@ -800,11 +941,7 @@ impl<T> LFShardedRingBuf<T> {
             inner.enqueue_index.load(Ordering::Relaxed),
             inner.dequeue_index.load(Ordering::Relaxed),
         );
-        let jobs = if enq_ind >= deq_ind {
-            enq_ind - deq_ind
-        } else {
-            enq_ind.wrapping_sub(deq_ind)
-        };
+        let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == item_len
     }
 
@@ -899,8 +1036,6 @@ impl<T> LFShardedRingBuf<T> {
     /// Gets the total number of jobs within a shard. Returns None if the shard
     /// index is invalid.
     ///
-    /// Note that the job count is claimed in a Relaxed memory ordering manner.
-    ///
     /// Time Complexity: O(1)
     ///
     /// Space Complexity: O(1)
@@ -915,11 +1050,7 @@ impl<T> LFShardedRingBuf<T> {
             inner.enqueue_index.load(Ordering::Relaxed),
             inner.dequeue_index.load(Ordering::Relaxed),
         );
-        let jobs = if enq_count >= deq_count {
-            enq_count - deq_count
-        } else {
-            enq_count.wrapping_sub(deq_count)
-        };
+        let jobs = enq_count.wrapping_sub(deq_count);
         Some(jobs)
     }
 
@@ -943,11 +1074,7 @@ impl<T> LFShardedRingBuf<T> {
             inner.enqueue_index.load(Ordering::Relaxed),
             inner.dequeue_index.load(Ordering::Relaxed),
         );
-        let jobs = if enq_count >= deq_count {
-            enq_count - deq_count
-        } else {
-            enq_count.wrapping_sub(deq_count)
-        };
+        let jobs = enq_count.wrapping_sub(deq_count);
         Some(jobs)
     }
 
@@ -965,11 +1092,7 @@ impl<T> LFShardedRingBuf<T> {
                 shard.enqueue_index.load(Ordering::Relaxed),
                 shard.dequeue_index.load(Ordering::Relaxed),
             );
-            let jobs = if enq_count >= deq_count {
-                enq_count - deq_count
-            } else {
-                enq_count.wrapping_sub(deq_count)
-            };
+            let jobs = enq_count.wrapping_sub(deq_count);
             count.push(jobs);
         }
         count
@@ -999,11 +1122,7 @@ impl<T> LFShardedRingBuf<T> {
                 shard.enqueue_index.load(Ordering::Relaxed),
                 shard.dequeue_index.load(Ordering::Relaxed),
             );
-            let jobs = if enq_count >= deq_count {
-                enq_count - deq_count
-            } else {
-                enq_count.wrapping_sub(deq_count)
-            };
+            let jobs = enq_count.wrapping_sub(deq_count);
             count.push(jobs);
         }
         count

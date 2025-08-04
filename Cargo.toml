@@ -25,6 +25,7 @@ tokio = {version = "^1.45.1", features = ["rt"] }
 criterion = {version = "^0.6.0", features =["async_tokio"] }
 tokio = {version = "^1.45.1", features = ["sync", "macros", "rt-multi-thread"] }
 kanal = "^0.1.1"
+async-channel = "2.5.0"
 
 [[bench]]
 name = "rb_benchmarks"

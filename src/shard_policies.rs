@@ -7,7 +7,9 @@ pub enum ShardPolicy {
     /// Sweep: The task starts off at provided index (or random *initial index* if None)
     /// and performs a full sweep around the buffer to acquire shards to
     /// enqueue/dequeue items (shift by 1)
-    Sweep { initial_index: Option<usize> },
+    Sweep {
+        initial_index: Option<usize>,
+    },
     /// RandomAndSweep: The task starts off at a random index always and performs a full
     /// sweep around the buffer to acquire shards to enqueue/dequeue items
     RandomAndSweep,
@@ -20,6 +22,9 @@ pub enum ShardPolicy {
         initial_index: Option<usize>,
         shift: usize,
     },
+    Pin {
+        initial_index: usize,
+    },
 }
 
 /// This is a private wrapper enum to abstract away from typed ShardPolicy
@@ -30,4 +35,5 @@ pub(crate) enum ShardPolicyKind {
     RandomAndSweep,
     ShiftBy,
     Cft,
+    Pin,
 }

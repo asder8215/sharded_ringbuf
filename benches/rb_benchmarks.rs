@@ -1,7 +1,7 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use kanal::bounded_async;
-use lf_shardedringbuf::{LFShardedRingBuf, spawn_buffer_task, spawn_with_cft};
-use lf_shardedringbuf::{ShardPolicy, TaskRole, spawn_assigner, terminate_assigner};
+use lf_shardedringbuf::{LFShardedRingBuf, TaskRole, spawn_buffer_task, spawn_with_cft};
+use lf_shardedringbuf::{ShardPolicy, spawn_assigner, terminate_assigner};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -12,16 +12,22 @@ use tokio::task;
 // comparing the benchmarking to
 // https://github.com/fereidani/rust-channel-benchmarks/tree/main?tab=readme-ov-file
 const MAX_SHARDS: [usize; 7] = [4, 8, 16, 32, 64, 128, 256];
-const MAX_TASKS: usize = 4;
-const MAX_THREADS: usize = 4;
-const CAPACITY: usize = 1024;
-// const CAPACITY: usize = 1000000;
-const ITEM_PER_TASK: usize = 250000;
+const MAX_TASKS: usize = 1000;
+const MAX_THREADS: usize = 1;
+const BASE_CAPACITY: usize = 1;
+// const MAX_TASKS_F64: f64 = MAX_TASKS as f64;
+const CAPACITY: usize = BASE_CAPACITY * MAX_THREADS;
+// const CAPACITY: usize = BASE_CAPACITY;
+// const    CAPACITY: usize = BASE_CAPACITY * MAX_THREADS * ((MAX_TASKS).isqrt() as usize);
+// const    CAPACITY: usize = BASE_CAPACITY * MAX_THREADS * ((MAX_TASKS).isqrt() as usize);
+
+// const CAPACITY: usize = 500000;
+const ITEM_PER_TASK: usize = 1000;
 
 async fn benchmark_kanal_async(c: usize) {
-    let (s, r) = bounded_async::<usize>(c);
-    let s = Arc::new(s);
-    let r = Arc::new(r);
+    let (s, r) = bounded_async(c);
+    // let s = Arc::new(s);
+    // let r = Arc::new(r);
     let mut handles = Vec::new();
 
     for _ in 0..MAX_TASKS {
@@ -33,14 +39,46 @@ async fn benchmark_kanal_async(c: usize) {
         }));
     }
 
-    for _ in 0..MAX_TASKS {
+    for _ in 0..1 {
         let tx = s.clone();
         handles.push(task::spawn(async move {
+            for _ in 0..MAX_TASKS {
             for i in 0..ITEM_PER_TASK {
                 tx.send(i).await.unwrap();
             }
+        }
         }));
     }
+
+    // for _ in 0..MAX_THREADS {
+    //     let s = s.clone();
+    //     let s = Arc::new(s);
+    //     for _ in 0..MAX_TASKS / MAX_THREADS {
+    //         let tx = s.clone();
+    //         handles.push(task::spawn(
+    //             async move {
+    //                 for i in 0..ITEM_PER_TASK {
+    //                     tx.send(i).await.unwrap();
+    //                 }
+    //             }
+    //         ))
+    //     }
+    // }
+
+    // for _ in 0..1 {
+    //     let r = r.clone();
+    //     let r = Arc::new(r);
+    //     for _ in 0..MAX_TASKS / MAX_THREADS {
+    //         let rx = r.clone();
+    //         handles.push(task::spawn(
+    //             async move {
+    //                 for _ in 0..ITEM_PER_TASK * MAX_TASKS {
+    //                     rx.recv().await.unwrap();
+    //                 }
+    //             }
+    //         ))
+    //     }
+    // }
 
     for handle in handles {
         handle.await.unwrap();
@@ -48,7 +86,7 @@ async fn benchmark_kanal_async(c: usize) {
 }
 
 async fn benchmark_kanal_async_barrier(c: usize) {
-    let (s, r) = bounded_async::<usize>(c);
+    let (s, r) = bounded_async(c);
     let s = Arc::new(s);
     let r = Arc::new(r);
 
@@ -83,10 +121,39 @@ async fn benchmark_kanal_async_barrier(c: usize) {
     }
 }
 
+async fn benchmark_async_channel(c: usize) {
+    let (s, r) = async_channel::bounded(c);
+    let s = Arc::new(s);
+    let r = Arc::new(r);
+    let mut handles = Vec::new();
+
+    for _ in 0..MAX_TASKS {
+        let rx = r.clone();
+        handles.push(task::spawn(async move {
+            for _ in 0..ITEM_PER_TASK {
+                rx.recv().await.unwrap();
+            }
+        }));
+    }
+
+    for _ in 0..MAX_TASKS {
+        let tx = s.clone();
+        handles.push(task::spawn(async move {
+            for i in 0..ITEM_PER_TASK {
+                tx.send(i).await.unwrap();
+            }
+        }));
+    }
+
+    for handle in handles {
+        handle.await.unwrap();
+    }
+}
+
 async fn benchmark_lfsrb_cft(capacity: usize, shards: usize) {
     let max_items: usize = capacity;
 
-    let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(max_items, shards));
+    let rb = Arc::new(LFShardedRingBuf::new(max_items, shards));
 
     let mut deq_threads = Vec::with_capacity(MAX_TASKS);
     let mut enq_threads = Vec::with_capacity(MAX_TASKS);
@@ -106,14 +173,34 @@ async fn benchmark_lfsrb_cft(capacity: usize, shards: usize) {
     }
 
     // spawn deq tasks with shift by policy
-    for _ in 0..MAX_TASKS {
+    // for _ in 0..MAX_TASKS {
+    //     let rb = Arc::clone(&rb);
+    //     let handler = spawn_with_cft(TaskRole::Dequeue, rb.clone(), async move {
+    //         let mut counter: usize = 0;
+    //         for _i in 0..ITEM_PER_TASK {
+    //             let item = rb.dequeue().await;
+    //             match item {
+    //                 Some(_) => counter += 1,
+    //                 None => break,
+    //             }
+    //         }
+    //         counter
+    //     });
+    //     deq_threads.push(handler);
+    // }
+
+    for _ in 0..16 {
         let rb = Arc::clone(&rb);
         let handler = spawn_with_cft(TaskRole::Dequeue, rb.clone(), async move {
             let mut counter: usize = 0;
-            for _i in 0..ITEM_PER_TASK {
-                let item = rb.dequeue().await;
+            loop {
+                let item = rb.dequeue_full().await;
                 match item {
-                    Some(_) => counter += 1,
+                    Some(vec) => {
+                        for _ in vec {
+                            counter += 1;
+                        }
+                    }
                     None => break,
                 }
             }
@@ -127,6 +214,8 @@ async fn benchmark_lfsrb_cft(capacity: usize, shards: usize) {
         enq.await.unwrap();
         // println!("I'm done as enqueuer");
     }
+
+    rb.poison();
 
     // Wait for dequeuers
     for deq in deq_threads {
@@ -144,7 +233,7 @@ async fn benchmark_lfsrb_cft(capacity: usize, shards: usize) {
 async fn benchmark_lfsrb_shiftby(capacity: usize, shards: usize) {
     let max_items: usize = capacity;
 
-    let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(max_items, shards));
+    let rb = Arc::new(LFShardedRingBuf::new(max_items, shards));
 
     let mut deq_threads = Vec::with_capacity(MAX_TASKS);
     let mut enq_threads = Vec::with_capacity(MAX_TASKS);
@@ -167,7 +256,51 @@ async fn benchmark_lfsrb_shiftby(capacity: usize, shards: usize) {
     }
 
     // spawn deq tasks with shift by policy
-    for _ in 0..MAX_TASKS {
+    // for _ in 0..MAX_TASKS {
+    //     let rb = Arc::clone(&rb);
+    //     let handler: tokio::task::JoinHandle<usize> = spawn_buffer_task(
+    //         ShardPolicy::ShiftBy {
+    //             initial_index: None,
+    //             shift: MAX_TASKS,
+    //         },
+    //         async move {
+    //             let mut counter: usize = 0;
+    //             for _i in 0..ITEM_PER_TASK {
+    //                 let item = rb.dequeue().await;
+    //                 match item {
+    //                     Some(_) => counter += 1,
+    //                     None => break,
+    //                 }
+    //             }
+    //             counter
+    //         },
+    //     );
+    //     deq_threads.push(handler);
+    // }
+
+    // for _ in 0..1 {
+    //     let rb = Arc::clone(&rb);
+    //     let handler: tokio::task::JoinHandle<usize> = spawn_buffer_task(
+    //         ShardPolicy::ShiftBy {
+    //             initial_index: None,
+    //             shift: MAX_TASKS,
+    //         },
+    //         async move {
+    //             let mut counter: usize = 0;
+    //             for _i in 0..ITEM_PER_TASK {
+    //                 let item = rb.dequeue().await;
+    //                 match item {
+    //                     Some(_) => counter += 1,
+    //                     None => break,
+    //                 }
+    //             }
+    //             counter
+    //         },
+    //     );
+    //     deq_threads.push(handler);
+    // }
+
+    for _ in 0..16 * 4 {
         let rb = Arc::clone(&rb);
         let handler: tokio::task::JoinHandle<usize> = spawn_buffer_task(
             ShardPolicy::ShiftBy {
@@ -176,7 +309,7 @@ async fn benchmark_lfsrb_shiftby(capacity: usize, shards: usize) {
             },
             async move {
                 let mut counter: usize = 0;
-                for _i in 0..ITEM_PER_TASK {
+                loop {
                     let item = rb.dequeue().await;
                     match item {
                         Some(_) => counter += 1,
@@ -194,6 +327,8 @@ async fn benchmark_lfsrb_shiftby(capacity: usize, shards: usize) {
         enq.await.unwrap();
     }
 
+    rb.poison();
+
     // Wait for dequeuers
     for deq in deq_threads {
         deq.await.unwrap();
@@ -202,8 +337,8 @@ async fn benchmark_lfsrb_shiftby(capacity: usize, shards: usize) {
 
 async fn benchmark_lfsrb_barrier_shiftby(capacity: usize, shards: usize) {
     let max_items: usize = capacity;
-
-    let rb: Arc<LFShardedRingBuf<usize>> = Arc::new(LFShardedRingBuf::new(max_items, shards));
+    
+    let rb = Arc::new(LFShardedRingBuf::new(max_items, shards));
 
     // barrier used to make sure all tasks are operating at the same time
     // so that threads are all assigned a task at once
@@ -244,9 +379,13 @@ async fn benchmark_lfsrb_barrier_shiftby(capacity: usize, shards: usize) {
                 barrier.wait().await;
                 let mut counter: usize = 0;
                 for _i in 0..ITEM_PER_TASK {
-                    let item = rb.dequeue().await;
+                    let item = rb.dequeue_full().await;
                     match item {
-                        Some(_) => counter += 1,
+                        Some(vec) => {
+                            for _ in vec {
+                                counter += 1;
+                            }
+                        }
                         None => break,
                     }
                 }
@@ -267,6 +406,90 @@ async fn benchmark_lfsrb_barrier_shiftby(capacity: usize, shards: usize) {
     }
 }
 
+async fn benchmark_pin(capacity: usize, shards: usize) {
+    let max_items: usize = capacity;
+
+    let rb = Arc::new(LFShardedRingBuf::new(max_items, shards));
+
+    let mut deq_threads = Vec::with_capacity(MAX_TASKS);
+    let mut enq_threads = Vec::with_capacity(MAX_TASKS);
+
+    // for i in 0..MAX_THREADS {
+    //     let rb = Arc::clone(&rb);
+    //     let handler: tokio::task::JoinHandle<usize> =
+    //         spawn_buffer_task(ShardPolicy::Pin { initial_index: i }, async move {
+    //             let mut counter: usize = 0;
+    //             loop {
+    //                 let item = rb.dequeue_full().await;
+    //                 match item {
+    //                     Some(_) => counter += 1,
+    //                     None => break,
+    //                 }
+    //             }
+    //             counter
+    //         });
+    //     deq_threads.push(handler);
+    // }
+
+    // spawn enq tasks with shift by policy
+    for i in 0..MAX_THREADS {
+        let rb = Arc::clone(&rb);
+        let handler: tokio::task::JoinHandle<()> =
+            spawn_buffer_task(ShardPolicy::Pin { initial_index: i }, async move {
+                for i in 0..ITEM_PER_TASK {
+                    rb.enqueue(i).await;
+                }
+            });
+        enq_threads.push(handler);
+    }
+
+    // for i in 0..MAX_THREADS {
+    for i in 0..MAX_TASKS {
+        let rb = Arc::clone(&rb);
+        let handler: tokio::task::JoinHandle<usize> =
+            spawn_buffer_task(ShardPolicy::Pin { initial_index: i}, async move {
+                let mut counter: usize = 0;
+                loop {
+                    let item = rb.dequeue_full().await;
+                    match item {
+                        Some(_) => counter += 1,
+                        None => break,
+                    }
+                }
+                counter
+            });
+        deq_threads.push(handler);
+    }
+
+    // for i in 0..MAX_TASKS {
+    //     let rb = Arc::clone(&rb);
+    //     let handler: tokio::task::JoinHandle<usize> =
+    //         spawn_buffer_task(ShardPolicy::Pin { initial_index: i}, async move {
+    //             let mut counter: usize = 0;
+    //             loop {
+    //                 let item = rb.dequeue().await;
+    //                 match item {
+    //                     Some(_) => counter += 1,
+    //                     None => break,
+    //                 }
+    //             }
+    //             counter
+    //         });
+    //     deq_threads.push(handler);
+    // }
+
+    // Wait for enqueuers
+    for enq in enq_threads {
+        enq.await.unwrap();
+    }
+    rb.poison();
+
+    // Wait for dequeuers
+    for deq in deq_threads {
+        deq.await.unwrap();
+    }
+}
+
 fn benchmark_multithreaded(c: &mut Criterion) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -274,9 +497,29 @@ fn benchmark_multithreaded(c: &mut Criterion) {
         .build()
         .unwrap();
 
+    // c.bench_with_input(
+    //     BenchmarkId::new("async_channel", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_async_channel(s).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
     c.bench_with_input(
-        BenchmarkId::new("kanal_async", CAPACITY),
-        &CAPACITY,
+        BenchmarkId::new("kanal_async", BASE_CAPACITY),
+        &BASE_CAPACITY,
         |b, &s| {
             // Insert a call to `to_async` to convert the bencher to async mode.
             // The timing loops are the same as with the normal bencher.
@@ -294,8 +537,328 @@ fn benchmark_multithreaded(c: &mut Criterion) {
         },
     );
 
+    // c.bench_with_input(
+    //     BenchmarkId::new("1shard_buffer_sb", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_shiftby(s, 8).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
+    // c.bench_with_input(
+    //     BenchmarkId::new("4shard_buffer_sb", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_shiftby(s, MAX_SHARDS[0]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
+    // c.bench_with_input(
+    //     BenchmarkId::new("8shard_buffer_sb", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_shiftby(s, MAX_SHARDS[1]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
+    // c.bench_with_input(
+    //     BenchmarkId::new("16shard_buffer_sb", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_shiftby(s, MAX_SHARDS[2]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
+    // c.bench_with_input(
+    //     BenchmarkId::new("32shard_buffer_sb", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_shiftby(s, MAX_SHARDS[3]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
+    // c.bench_with_input(
+    //     BenchmarkId::new("64shard_buffer_sb", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_shiftby(s, MAX_SHARDS[4]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
+    // c.bench_with_input(
+    //     BenchmarkId::new("128shard_buffer_sb", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_shiftby(s, MAX_SHARDS[5]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
+    // c.bench_with_input(
+    //     BenchmarkId::new("256shard_buffer_sb", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_shiftby(s, MAX_SHARDS[6]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
+    // c.bench_with_input(
+    //     BenchmarkId::new("kanal_async_barrier_sb", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_kanal_async_barrier(s).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
+    // c.bench_with_input(
+    //     BenchmarkId::new("4shard_buffer_barrier_sb", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_barrier_shiftby(s, MAX_SHARDS[0]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
+    // c.bench_with_input(
+    //     BenchmarkId::new("8shard_buffer_barrier_sb", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_barrier_shiftby(s, MAX_SHARDS[1]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
+    // c.bench_with_input(
+    //     BenchmarkId::new("16shard_buffer_barrier_sb", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_barrier_shiftby(s, MAX_SHARDS[2]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
+    // c.bench_with_input(
+    //     BenchmarkId::new("32shard_buffer_barrier_sb", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_barrier_shiftby(s, MAX_SHARDS[3]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
+    // c.bench_with_input(
+    //     BenchmarkId::new("64shard_buffer_barrier_sb", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_barrier_shiftby(s, MAX_SHARDS[4]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
+    // c.bench_with_input(
+    //     BenchmarkId::new("128shard_buffer_barrier_sb", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_barrier_shiftby(s, MAX_SHARDS[5]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
+    // c.bench_with_input(
+    //     BenchmarkId::new("256shard_buffer_barrier_sb", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_barrier_shiftby(s, MAX_SHARDS[6]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
+
+    //             total
+    //         });
+    //     },
+    // );
+
     c.bench_with_input(
-        BenchmarkId::new("4shard_buffer_sb", CAPACITY),
+        BenchmarkId::new("testshard_buffer_pin", CAPACITY),
         &CAPACITY,
         |b, &s| {
             // Insert a call to `to_async` to convert the bencher to async mode.
@@ -304,7 +867,7 @@ fn benchmark_multithreaded(c: &mut Criterion) {
                 let mut total = Duration::ZERO;
                 for _i in 0..iters {
                     let start = Instant::now();
-                    benchmark_lfsrb_shiftby(s, MAX_SHARDS[0]).await;
+                    benchmark_pin(s,MAX_THREADS).await;
                     let end = Instant::now();
                     total += end - start;
                 }
@@ -314,425 +877,165 @@ fn benchmark_multithreaded(c: &mut Criterion) {
         },
     );
 
-    c.bench_with_input(
-        BenchmarkId::new("8shard_buffer_sb", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_shiftby(s, MAX_SHARDS[1]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+    // c.bench_with_input(
+    //     BenchmarkId::new("8shard_buffer_cft", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_cft(s, 16).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
 
-                total
-            });
-        },
-    );
+    //             total
+    //         });
+    //     },
+    // );
 
-    c.bench_with_input(
-        BenchmarkId::new("16shard_buffer_sb", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_shiftby(s, MAX_SHARDS[2]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+    // c.bench_with_input(
+    //     BenchmarkId::new("4shard_buffer_cft", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_cft(s, MAX_SHARDS[0]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
 
-                total
-            });
-        },
-    );
+    //             total
+    //         });
+    //     },
+    // );
 
-    c.bench_with_input(
-        BenchmarkId::new("32shard_buffer_sb", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_shiftby(s, MAX_SHARDS[3]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+    // c.bench_with_input(
+    //     BenchmarkId::new("8shard_buffer_cft", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_cft(s, MAX_SHARDS[1]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
 
-                total
-            });
-        },
-    );
+    //             total
+    //         });
+    //     },
+    // );
 
-    c.bench_with_input(
-        BenchmarkId::new("64shard_buffer_sb", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_shiftby(s, MAX_SHARDS[4]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+    // c.bench_with_input(
+    //     BenchmarkId::new("16shard_buffer_cft", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_cft(s, MAX_SHARDS[2]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
 
-                total
-            });
-        },
-    );
+    //             total
+    //         });
+    //     },
+    // );
 
-    c.bench_with_input(
-        BenchmarkId::new("128shard_buffer_sb", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_shiftby(s, MAX_SHARDS[5]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+    // c.bench_with_input(
+    //     BenchmarkId::new("32shard_buffer_cft", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_cft(s, MAX_SHARDS[3]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
 
-                total
-            });
-        },
-    );
+    //             total
+    //         });
+    //     },
+    // );
 
-    c.bench_with_input(
-        BenchmarkId::new("256shard_buffer_sb", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_shiftby(s, MAX_SHARDS[6]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+    // c.bench_with_input(
+    //     BenchmarkId::new("64shard_buffer_cft", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_cft(s, MAX_SHARDS[4]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
 
-                total
-            });
-        },
-    );
+    //             total
+    //         });
+    //     },
+    // );
 
-    c.bench_with_input(
-        BenchmarkId::new("kanal_async_barrier_sb", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_kanal_async_barrier(s).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+    // c.bench_with_input(
+    //     BenchmarkId::new("128shard_buffer_cft", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_cft(s, MAX_SHARDS[5]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
 
-                total
-            });
-        },
-    );
+    //             total
+    //         });
+    //     },
+    // );
 
-    c.bench_with_input(
-        BenchmarkId::new("4shard_buffer_barrier_sb", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_barrier_shiftby(s, MAX_SHARDS[0]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+    // c.bench_with_input(
+    //     BenchmarkId::new("256shard_buffer_cft", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_lfsrb_cft(s, MAX_SHARDS[6]).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
 
-                total
-            });
-        },
-    );
-
-    c.bench_with_input(
-        BenchmarkId::new("8shard_buffer_barrier_sb", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_barrier_shiftby(s, MAX_SHARDS[1]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
-
-                total
-            });
-        },
-    );
-
-    c.bench_with_input(
-        BenchmarkId::new("16shard_buffer_barrier_sb", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_barrier_shiftby(s, MAX_SHARDS[2]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
-
-                total
-            });
-        },
-    );
-
-    c.bench_with_input(
-        BenchmarkId::new("32shard_buffer_barrier_sb", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_barrier_shiftby(s, MAX_SHARDS[3]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
-
-                total
-            });
-        },
-    );
-
-    c.bench_with_input(
-        BenchmarkId::new("64shard_buffer_barrier_sb", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_barrier_shiftby(s, MAX_SHARDS[4]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
-
-                total
-            });
-        },
-    );
-
-    c.bench_with_input(
-        BenchmarkId::new("128shard_buffer_barrier_sb", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_barrier_shiftby(s, MAX_SHARDS[5]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
-
-                total
-            });
-        },
-    );
-
-    c.bench_with_input(
-        BenchmarkId::new("256shard_buffer_barrier_sb", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_barrier_shiftby(s, MAX_SHARDS[6]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
-
-                total
-            });
-        },
-    );
-
-    c.bench_with_input(
-        BenchmarkId::new("4shard_buffer_cft", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_cft(s, MAX_SHARDS[0]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
-
-                total
-            });
-        },
-    );
-
-    c.bench_with_input(
-        BenchmarkId::new("8shard_buffer_cft", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_cft(s, MAX_SHARDS[1]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
-
-                total
-            });
-        },
-    );
-
-    c.bench_with_input(
-        BenchmarkId::new("16shard_buffer_cft", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_cft(s, MAX_SHARDS[2]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
-
-                total
-            });
-        },
-    );
-
-    c.bench_with_input(
-        BenchmarkId::new("32shard_buffer_cft", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_cft(s, MAX_SHARDS[3]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
-
-                total
-            });
-        },
-    );
-
-    c.bench_with_input(
-        BenchmarkId::new("64shard_buffer_cft", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_cft(s, MAX_SHARDS[4]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
-
-                total
-            });
-        },
-    );
-
-    c.bench_with_input(
-        BenchmarkId::new("128shard_buffer_cft", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_cft(s, MAX_SHARDS[5]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
-
-                total
-            });
-        },
-    );
-
-    c.bench_with_input(
-        BenchmarkId::new("256shard_buffer_cft", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_lfsrb_cft(s, MAX_SHARDS[6]).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
-
-                total
-            });
-        },
-    );
+    //             total
+    //         });
+    //     },
+    // );
 }
 
 // fn benchmark_single_threaded(c: &mut Criterion) {
