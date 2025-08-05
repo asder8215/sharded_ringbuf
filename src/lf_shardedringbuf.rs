@@ -9,7 +9,7 @@ use fastrand::usize as frand;
 use std::{
     cell::UnsafeCell,
     fmt::{Debug, Write},
-    mem::MaybeUninit,
+    mem::{transmute_copy, zeroed, MaybeUninit},
     ptr,
     sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
 };
@@ -53,7 +53,8 @@ pub struct LFShardedRingBuf<T> {
 #[derive(Debug, Default)]
 struct InnerRingBuffer<T> {
     /// Box containing the content of the buffer
-    items: Box<[UnsafeCell<MaybeUninit<T>>]>,
+    // items: Box<[UnsafeCell<MaybeUninit<T>>]>,
+    items: Box<[UnsafeCell<MaybeUninit<*mut T>>]>,
     /// Where to enqueue at in the Box
     enqueue_index: AtomicUsize,
     /// Where to dequeue at in the Box
@@ -384,6 +385,29 @@ impl<T> LFShardedRingBuf<T> {
         current
     }
 
+    #[inline]
+    fn write_item(&self, d: *const T, item_cell: *mut MaybeUninit<*mut T>) {
+        if size_of::<T>() > size_of::<*mut T>() {
+            let boxed_ptr = Box::new(unsafe { d.read() });
+            unsafe { (*item_cell) = MaybeUninit::new(Box::into_raw(boxed_ptr));}
+            // Can I do the below safely? I'm not too sure because stack allocated
+            // variables could be dropped when it goes out of scope 
+            // unsafe { (*item_cell) = MaybeUninit::new(d as *mut T)}
+        } else if size_of::<T>() > 0 {
+            let mut in_place_copy = MaybeUninit::uninit();
+            // let test = unsafe {*(in_place_copy).as_mut_ptr()};
+            unsafe { 
+
+                // ptr::copy_nonoverlapping(d, (in_place_copy).as_mut_ptr() as *mut T, 1);
+                ptr::copy_nonoverlapping(d, in_place_copy.as_mut_ptr() as *mut T, 1);
+                // ptr::copy_nonoverlapping(d, test, 1);
+                (*item_cell) = in_place_copy;
+                // println!("{:?}", (*item_cell).assume_init_read());
+            };
+        }
+        // no need to handle ZSTs via else condition
+    }
+
     /// Grab inner ring buffer shard, enqueue the item, update the enqueue index
     #[inline(always)]
     fn enqueue_in_shard(&self, shard_ind: usize, item: T) {
@@ -398,9 +422,10 @@ impl<T> LFShardedRingBuf<T> {
         let item_cell = inner.items[enqueue_index].get();
         // SAFETY: Only one thread will perform this operation and write to this
         // item cell
-        unsafe {
-            (*item_cell).write(item);
-        }
+        // unsafe {
+        //     (*item_cell).write(item);
+        // }
+        self.write_item(&item, item_cell);
     }
 
     /// Helper function to add an Option item to the RingBuffer
@@ -445,9 +470,10 @@ impl<T> LFShardedRingBuf<T> {
                     let enqueue_index =
                         inner.enqueue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
                     let item_cell = inner.items[enqueue_index].get();
-                    unsafe {
-                        (*item_cell).write(item);
-                    }
+                    // unsafe {
+                    //     (*item_cell).write(item);
+                    // }
+                    self.write_item(&item, item_cell);
                     self.job_available_notif.notify_one();
                     return;
                 }
@@ -473,6 +499,31 @@ impl<T> LFShardedRingBuf<T> {
         self.enqueue_item(item).await;
     }
 
+    #[inline]
+    fn fetch_item(&self, item_cell: *mut MaybeUninit<*mut T>) -> T {
+        if size_of::<T>() > size_of::<*mut T>() {
+            // println!("I'm here");
+            // pointer to T is dropped, but T is taken safely
+            let item = unsafe {*Box::from_raw((*item_cell).assume_init())};
+            item
+        } else if size_of::<T>() > 0 {
+            // we get the value of T safely while freeing it
+            // println!("here");
+            // unsafe { println!("I see {:?}", ((*item_cell).assume_init()))};
+            // unsafe { println!("Again I see {:?}", ((*item_cell).assume_init()))};
+
+            // let item = unsafe {ptr::read((*item_cell).assume_init())};
+            // let item = unsafe {ptr::read((*item_cell).assume_init())};
+            let item = unsafe {transmute_copy(&(*item_cell).assume_init())};
+            // println!("I'm here");
+            // println!("The item I got is {:#?}", item);
+            item
+        } else {
+            // ZST should just get zeroed out bytes
+            unsafe {zeroed()}
+        }
+    }
+
     /// Grab the inner ring buffer shard, dequeue the item, update the dequeue index
     #[inline(always)]
     fn dequeue_in_shard(&self, shard_ind: usize) -> T {
@@ -487,13 +538,16 @@ impl<T> LFShardedRingBuf<T> {
 
         // SAFETY: Only one thread will perform this operation
         // And it's guaranteed that an item will exist here
-        let item = unsafe { (*inner.items[dequeue_index].get()).assume_init_read() };
+        // let item = unsafe { (*inner.items[dequeue_index].get()).assume_init_read() };
 
         // SAFETY: We just copied the item by value, so we no longer need to hold
         // this item in memory
-        unsafe {
-            ptr::drop_in_place((*inner.items[dequeue_index].get()).as_mut_ptr());
-        }
+        // unsafe {
+        //     ptr::drop_in_place((*inner.items[dequeue_index].get()).as_mut_ptr());
+        // }
+        let item_cell = inner.items[dequeue_index].get();
+
+        let item = self.fetch_item(item_cell);
         item
     }
 
@@ -538,14 +592,18 @@ impl<T> LFShardedRingBuf<T> {
                 if jobs != 0 {
                     let dequeue_index =
                         inner.dequeue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
-                    // SAFETY: Only one thread will claim this slot and perform this operation
-                    // And it's guaranteed that an item will exist here
-                    let item = unsafe { (*inner.items[dequeue_index].get()).assume_init_read() };
-                    // SAFETY: We just copied the item by value, so we no longer need to hold
-                    // this item in memory
-                    unsafe {
-                        ptr::drop_in_place((*inner.items[dequeue_index].get()).as_mut_ptr());
-                    }
+                    // // SAFETY: Only one thread will claim this slot and perform this operation
+                    // // And it's guaranteed that an item will exist here
+                    // let item = unsafe { (*inner.items[dequeue_index].get()).assume_init_read() };
+                    // // SAFETY: We just copied the item by value, so we no longer need to hold
+                    // // this item in memory
+                    // unsafe {
+                    //     ptr::drop_in_place((*inner.items[dequeue_index].get()).as_mut_ptr());
+                    // }
+
+                    let item_cell = inner.items[dequeue_index].get();
+                    let item = self.fetch_item(item_cell);
+
                     self.job_space_notif.notify_one();
                     return Some(item);
                 }
@@ -614,15 +672,17 @@ impl<T> LFShardedRingBuf<T> {
                     if jobs != 0 {
                         let dequeue_index =
                             inner.dequeue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
-                        // SAFETY: Only one thread will claim this slot and perform this operation
-                        // And it's guaranteed that an item will exist here
-                        let item =
-                            unsafe { (*inner.items[dequeue_index].get()).assume_init_read() };
-                        // SAFETY: We just copied the item by value, so we no longer need to hold
-                        // this item in memory
-                        unsafe {
-                            ptr::drop_in_place((*inner.items[dequeue_index].get()).as_mut_ptr());
-                        }
+                        // // SAFETY: Only one thread will claim this slot and perform this operation
+                        // // And it's guaranteed that an item will exist here
+                        // let item =
+                        //     unsafe { (*inner.items[dequeue_index].get()).assume_init_read() };
+                        // // SAFETY: We just copied the item by value, so we no longer need to hold
+                        // // this item in memory
+                        // unsafe {
+                        //     ptr::drop_in_place((*inner.items[dequeue_index].get()).as_mut_ptr());
+                        // }
+                        let item_cell = inner.items[dequeue_index].get();
+                        let item = self.fetch_item(item_cell);
                         vec_items.push(item);
                     } else {
                         break;
@@ -1146,6 +1206,26 @@ impl<T> LFShardedRingBuf<T> {
         }
     }
 
+    #[inline]
+    fn clone_item(&self, item_cell: *mut MaybeUninit<*mut T>) -> T 
+    where 
+    T: Clone
+    {
+        if size_of::<T>() > size_of::<*mut T>() {
+            // pointer to T is dropped, but T is taken safely
+            let item = unsafe {(*(*item_cell).assume_init_read()).clone()};
+            item
+        } else if size_of::<T>() > 0{
+            // we get the value of T safely while freeing it
+            // let item = unsafe {ptr::read((*item_cell).assume_init_read())};
+            let item = unsafe {transmute_copy(&(*item_cell).assume_init_read())};
+            item
+        } else {
+            // ZST should just get zeroed out bytes
+            unsafe {zeroed()}
+        }
+    }
+
     /// Returns a clone of an item within the buffer or
     /// None if the shard index/item index is invalid or if there exists
     /// no item inside that position
@@ -1177,8 +1257,11 @@ impl<T> LFShardedRingBuf<T> {
         // item index is in [dequeue ind, enqueue ind) + wraparound
         unsafe {
             if self.is_item_in_shard(item_ind, shard_ind) {
-                let val_ref = (*inner.items[item_ind].get()).assume_init_ref();
-                Some(val_ref.clone())
+                // let val_ref = (*inner.items[item_ind].get()).assume_init_ref();
+                // Some(val_ref.clone())
+                let item_cell = inner.items[item_ind].get();
+                let val_ref = self.clone_item(item_cell);
+                Some(val_ref)
             } else {
                 None
             }
@@ -1219,8 +1302,11 @@ impl<T> LFShardedRingBuf<T> {
         // item index is in [dequeue ind, enqueue ind) + wraparound
         unsafe {
             if self.is_item_in_shard(item_ind, shard_ind) {
-                let val_ref = (*inner.items[item_ind].get()).assume_init_ref();
-                Some(val_ref.clone())
+                // let val_ref = (*inner.items[item_ind].get()).assume_init_ref();
+                // Some(val_ref.clone())
+                let item_cell = inner.items[item_ind].get();
+                let val_ref = self.clone_item(item_cell);
+                Some(val_ref)
             } else {
                 None
             }
@@ -1256,8 +1342,11 @@ impl<T> LFShardedRingBuf<T> {
             // item index is in [dequeue ind, enqueue ind) + wraparound
             for i in 0..inner.items.len() {
                 if self.is_item_in_shard(i, shard_ind) {
-                    let val_ref = unsafe { (*inner.items[i].get()).assume_init_ref() };
-                    vec.push(Some(val_ref.clone()))
+                    // let val_ref = unsafe { (*inner.items[i].get()).assume_init_ref() };
+                    // vec.push(Some(val_ref.clone()))
+                    let item_cell = inner.items[i].get();
+                    let val_ref = self.clone_item(item_cell);
+                    vec.push(Some(val_ref));
                 } else {
                     vec.push(None);
                 }
@@ -1301,8 +1390,11 @@ impl<T> LFShardedRingBuf<T> {
             // item index is in [dequeue ind, enqueue ind) + wraparound
             for i in 0..inner.items.len() {
                 if self.is_item_in_shard(i, shard_ind) {
-                    let val_ref = unsafe { (*inner.items[i].get()).assume_init_ref() };
-                    vec.push(Some(val_ref.clone()))
+                    // let val_ref = unsafe { (*inner.items[i].get()).assume_init_ref() };
+                    // vec.push(Some(val_ref.clone()))
+                    let item_cell = inner.items[i].get();
+                    let val_ref = self.clone_item(item_cell);
+                    vec.push(Some(val_ref));
                 } else {
                     vec.push(None);
                 }
@@ -1343,8 +1435,11 @@ impl<T> LFShardedRingBuf<T> {
                 // item index is in [dequeue ind, enqueue ind) + wraparound
                 for i in 0..shard.items.len() {
                     if self.is_item_in_shard(i, shard_ind) {
-                        let val_ref = unsafe { (*shard.items[i].get()).assume_init_ref() };
-                        shard_vec.push(Some(val_ref.clone()))
+                        // let val_ref = unsafe { (*shard.items[i].get()).assume_init_ref() };
+                        // shard_vec.push(Some(val_ref.clone()))
+                        let item_cell = shard.items[i].get();
+                        let val_ref = self.clone_item(item_cell);
+                        shard_vec.push(Some(val_ref));
                     } else {
                         shard_vec.push(None);
                     }
@@ -1397,8 +1492,11 @@ impl<T> LFShardedRingBuf<T> {
                 // item index is in [dequeue ind, enqueue ind) + wraparound
                 for i in 0..shard.items.len() {
                     if self.is_item_in_shard(i, shard_ind) {
-                        let val_ref = unsafe { (*shard.items[i].get()).assume_init_ref() };
-                        shard_vec.push(Some(val_ref.clone()))
+                        // let val_ref = unsafe { (*shard.items[i].get()).assume_init_ref() };
+                        // shard_vec.push(Some(val_ref.clone()))
+                        let item_cell = shard.items[i].get();
+                        let val_ref = self.clone_item(item_cell);
+                        shard_vec.push(Some(val_ref));
                     } else {
                         shard_vec.push(None);
                     }

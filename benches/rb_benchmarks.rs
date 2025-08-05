@@ -14,9 +14,9 @@ use tokio::task;
 // https://github.com/fereidani/rust-channel-benchmarks/tree/main?tab=readme-ov-file
 const MAX_SHARDS: [usize; 7] = [4, 8, 16, 32, 64, 128, 256];
 const MAX_TASKS: usize = 1000;
-const MAX_DEQ: usize = 1;
-const MAX_THREADS: usize = 1;
-const BASE_CAPACITY: usize = 1;
+const MAX_DEQ: usize = 8;
+const MAX_THREADS: usize = 8;
+const BASE_CAPACITY: usize = 128;
 const MAX_SHARD_TEST: usize = MAX_THREADS;
 // const MAX_TASKS_F64: f64 = MAX_TASKS as f64;
 const CAPACITY: usize = BASE_CAPACITY;
@@ -25,9 +25,9 @@ const CAPACITY: usize = BASE_CAPACITY;
 // const    CAPACITY: usize = BASE_CAPACITY * MAX_THREADS * ((MAX_TASKS).isqrt() as usize);
 
 // const CAPACITY: usize = 500000;
-const ITEM_PER_TASK: usize = 1;
+const ITEM_PER_TASK: u128 = 5;
 
-fn test_add(x: usize) -> usize {
+fn test_add(x: u128) -> u128 {
     let mut y = x;
     // sleep(Duration::from_nanos(10));
     y = y.wrapping_mul(31);
@@ -538,25 +538,25 @@ fn benchmark_multithreaded(c: &mut Criterion) {
     //     },
     // );
 
-    // c.bench_with_input(
-    //     BenchmarkId::new("kanal_async", BASE_CAPACITY),
-    //     &BASE_CAPACITY,
-    //     |b, &s| {
-    //         // Insert a call to `to_async` to convert the bencher to async mode.
-    //         // The timing loops are the same as with the normal bencher.
-    //         b.to_async(&runtime).iter_custom(|iters| async move {
-    //             let mut total = Duration::ZERO;
-    //             for _i in 0..iters {
-    //                 let start = Instant::now();
-    //                 benchmark_kanal_async(s).await;
-    //                 let end = Instant::now();
-    //                 total += end - start;
-    //             }
+    c.bench_with_input(
+        BenchmarkId::new("kanal_async", BASE_CAPACITY),
+        &BASE_CAPACITY,
+        |b, &s| {
+            // Insert a call to `to_async` to convert the bencher to async mode.
+            // The timing loops are the same as with the normal bencher.
+            b.to_async(&runtime).iter_custom(|iters| async move {
+                let mut total = Duration::ZERO;
+                for _i in 0..iters {
+                    let start = Instant::now();
+                    benchmark_kanal_async(s).await;
+                    let end = Instant::now();
+                    total += end - start;
+                }
 
-    //             total
-    //         });
-    //     },
-    // );
+                total
+            });
+        },
+    );
 
     // c.bench_with_input(
     //     BenchmarkId::new("1shard_buffer_sb", CAPACITY),
@@ -878,25 +878,25 @@ fn benchmark_multithreaded(c: &mut Criterion) {
     //     },
     // );
 
-    // c.bench_with_input(
-    //     BenchmarkId::new("testshard_buffer_pin", CAPACITY),
-    //     &CAPACITY,
-    //     |b, &s| {
-    //         // Insert a call to `to_async` to convert the bencher to async mode.
-    //         // The timing loops are the same as with the normal bencher.
-    //         b.to_async(&runtime).iter_custom(|iters| async move {
-    //             let mut total = Duration::ZERO;
-    //             for _i in 0..iters {
-    //                 let start = Instant::now();
-    //                 benchmark_pin(s, MAX_SHARD_TEST).await;
-    //                 let end = Instant::now();
-    //                 total += end - start;
-    //             }
+    c.bench_with_input(
+        BenchmarkId::new("testshard_buffer_pin", CAPACITY),
+        &CAPACITY,
+        |b, &s| {
+            // Insert a call to `to_async` to convert the bencher to async mode.
+            // The timing loops are the same as with the normal bencher.
+            b.to_async(&runtime).iter_custom(|iters| async move {
+                let mut total = Duration::ZERO;
+                for _i in 0..iters {
+                    let start = Instant::now();
+                    benchmark_pin(s, MAX_SHARD_TEST).await;
+                    let end = Instant::now();
+                    total += end - start;
+                }
 
-    //             total
-    //         });
-    //     },
-    // );
+                total
+            });
+        },
+    );
 
     // c.bench_with_input(
     //     BenchmarkId::new("8shard_buffer_cft", CAPACITY),

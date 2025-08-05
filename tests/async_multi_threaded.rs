@@ -11,10 +11,11 @@ use tokio::task::JoinHandle;
 #[tokio::test(flavor = "multi_thread")]
 async fn test_spsc_tasks() {
     for _ in 0..100 {
-        const MAX_ITEMS: usize = 100;
+        const MAX_ITEMS: u8 = 100;
+        const CAP: usize = 100;
         const MAX_SHARDS: usize = 10;
-        let rb: Arc<LFShardedRingBuf<usize>> =
-            Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb  =
+            Arc::new(LFShardedRingBuf::new(CAP, MAX_SHARDS));
 
         assert!(rb.is_empty());
 
@@ -34,7 +35,10 @@ async fn test_spsc_tasks() {
                     loop {
                         let item = rb.dequeue().await;
                         match item {
-                            Some(_) => counter += 1,
+                            Some(_) => {
+                                counter += 1;
+                                // println!("{:?}", item);
+                            },
                             None => break,
                         }
                     }
@@ -53,8 +57,8 @@ async fn test_spsc_tasks() {
                 },
                 async move {
                     let rb = rb.clone();
-                    for _i in 0..2 * MAX_ITEMS {
-                        rb.enqueue(20).await;
+                    for i in 0..2 * MAX_ITEMS {
+                        rb.enqueue(i).await;
                     }
                 },
             );
@@ -74,7 +78,7 @@ async fn test_spsc_tasks() {
 
         assert!(rb.is_empty());
 
-        assert_eq!(2 * MAX_ITEMS, items_taken);
+        assert_eq!(2 * CAP, items_taken);
     }
 }
 
