@@ -14,8 +14,7 @@ async fn test_spsc_tasks() {
         const MAX_ITEMS: u8 = 100;
         const CAP: usize = 100;
         const MAX_SHARDS: usize = 10;
-        let rb  =
-            Arc::new(LFShardedRingBuf::new(CAP, MAX_SHARDS));
+        let rb = Arc::new(LFShardedRingBuf::new(CAP, MAX_SHARDS));
 
         assert!(rb.is_empty());
 
@@ -38,7 +37,7 @@ async fn test_spsc_tasks() {
                             Some(_) => {
                                 counter += 1;
                                 // println!("{:?}", item);
-                            },
+                            }
                             None => break,
                         }
                     }

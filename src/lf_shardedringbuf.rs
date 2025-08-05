@@ -9,7 +9,7 @@ use fastrand::usize as frand;
 use std::{
     cell::UnsafeCell,
     fmt::{Debug, Write},
-    mem::{transmute_copy, zeroed, MaybeUninit},
+    mem::{MaybeUninit, transmute_copy, zeroed},
     ptr,
     sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
 };
@@ -389,15 +389,16 @@ impl<T> LFShardedRingBuf<T> {
     fn write_item(&self, d: *const T, item_cell: *mut MaybeUninit<*mut T>) {
         if size_of::<T>() > size_of::<*mut T>() {
             let boxed_ptr = Box::new(unsafe { d.read() });
-            unsafe { (*item_cell) = MaybeUninit::new(Box::into_raw(boxed_ptr));}
+            unsafe {
+                (*item_cell) = MaybeUninit::new(Box::into_raw(boxed_ptr));
+            }
             // Can I do the below safely? I'm not too sure because stack allocated
-            // variables could be dropped when it goes out of scope 
+            // variables could be dropped when it goes out of scope
             // unsafe { (*item_cell) = MaybeUninit::new(d as *mut T)}
         } else if size_of::<T>() > 0 {
             let mut in_place_copy = MaybeUninit::uninit();
             // let test = unsafe {*(in_place_copy).as_mut_ptr()};
-            unsafe { 
-
+            unsafe {
                 // ptr::copy_nonoverlapping(d, (in_place_copy).as_mut_ptr() as *mut T, 1);
                 ptr::copy_nonoverlapping(d, in_place_copy.as_mut_ptr() as *mut T, 1);
                 // ptr::copy_nonoverlapping(d, test, 1);
@@ -504,7 +505,7 @@ impl<T> LFShardedRingBuf<T> {
         if size_of::<T>() > size_of::<*mut T>() {
             // println!("I'm here");
             // pointer to T is dropped, but T is taken safely
-            let item = unsafe {*Box::from_raw((*item_cell).assume_init())};
+            let item = unsafe { *Box::from_raw((*item_cell).assume_init()) };
             item
         } else if size_of::<T>() > 0 {
             // we get the value of T safely while freeing it
@@ -514,13 +515,13 @@ impl<T> LFShardedRingBuf<T> {
 
             // let item = unsafe {ptr::read((*item_cell).assume_init())};
             // let item = unsafe {ptr::read((*item_cell).assume_init())};
-            let item = unsafe {transmute_copy(&(*item_cell).assume_init())};
+            let item = unsafe { transmute_copy(&(*item_cell).assume_init()) };
             // println!("I'm here");
             // println!("The item I got is {:#?}", item);
             item
         } else {
             // ZST should just get zeroed out bytes
-            unsafe {zeroed()}
+            unsafe { zeroed() }
         }
     }
 
@@ -1207,22 +1208,22 @@ impl<T> LFShardedRingBuf<T> {
     }
 
     #[inline]
-    fn clone_item(&self, item_cell: *mut MaybeUninit<*mut T>) -> T 
-    where 
-    T: Clone
+    fn clone_item(&self, item_cell: *mut MaybeUninit<*mut T>) -> T
+    where
+        T: Clone,
     {
         if size_of::<T>() > size_of::<*mut T>() {
             // pointer to T is dropped, but T is taken safely
-            let item = unsafe {(*(*item_cell).assume_init_read()).clone()};
+            let item = unsafe { (*(*item_cell).assume_init_read()).clone() };
             item
-        } else if size_of::<T>() > 0{
+        } else if size_of::<T>() > 0 {
             // we get the value of T safely while freeing it
             // let item = unsafe {ptr::read((*item_cell).assume_init_read())};
-            let item = unsafe {transmute_copy(&(*item_cell).assume_init_read())};
+            let item = unsafe { transmute_copy(&(*item_cell).assume_init_read()) };
             item
         } else {
             // ZST should just get zeroed out bytes
-            unsafe {zeroed()}
+            unsafe { zeroed() }
         }
     }
 
