@@ -31,6 +31,10 @@ async-channel = "2.5.0"
 name = "rb_benchmarks"
 harness = false
 
+[[bench]]
+name = "lfsrb_shiftby"
+harness = false
+
 [profile.dev]
 panic = "abort"
 

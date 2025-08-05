@@ -2,6 +2,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use kanal::bounded_async;
 use lf_shardedringbuf::{LFShardedRingBuf, TaskRole, spawn_buffer_task, spawn_with_cft};
 use lf_shardedringbuf::{ShardPolicy, spawn_assigner, terminate_assigner};
+use std::thread::sleep;
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -13,16 +14,27 @@ use tokio::task;
 // https://github.com/fereidani/rust-channel-benchmarks/tree/main?tab=readme-ov-file
 const MAX_SHARDS: [usize; 7] = [4, 8, 16, 32, 64, 128, 256];
 const MAX_TASKS: usize = 1000;
+const MAX_DEQ: usize = 1;
 const MAX_THREADS: usize = 1;
 const BASE_CAPACITY: usize = 1;
+const MAX_SHARD_TEST: usize = MAX_THREADS;
 // const MAX_TASKS_F64: f64 = MAX_TASKS as f64;
-const CAPACITY: usize = BASE_CAPACITY * MAX_THREADS;
+const CAPACITY: usize = BASE_CAPACITY;
 // const CAPACITY: usize = BASE_CAPACITY;
 // const    CAPACITY: usize = BASE_CAPACITY * MAX_THREADS * ((MAX_TASKS).isqrt() as usize);
 // const    CAPACITY: usize = BASE_CAPACITY * MAX_THREADS * ((MAX_TASKS).isqrt() as usize);
 
 // const CAPACITY: usize = 500000;
-const ITEM_PER_TASK: usize = 1000;
+const ITEM_PER_TASK: usize = 1;
+
+fn test_add(x: usize) -> usize {
+    let mut y = x;
+    // sleep(Duration::from_nanos(10));
+    y = y.wrapping_mul(31);
+    y = y.rotate_left(7);
+    y = y.wrapping_add(1);
+    y
+}
 
 async fn benchmark_kanal_async(c: usize) {
     let (s, r) = bounded_async(c);
@@ -30,23 +42,26 @@ async fn benchmark_kanal_async(c: usize) {
     // let r = Arc::new(r);
     let mut handles = Vec::new();
 
-    for _ in 0..MAX_TASKS {
+    for _ in 0..1 {
         let rx = r.clone();
         handles.push(task::spawn(async move {
-            for _ in 0..ITEM_PER_TASK {
-                rx.recv().await.unwrap();
+            for _ in 0..MAX_TASKS {
+                for _ in 0..ITEM_PER_TASK {
+                    let x = rx.recv().await.unwrap();
+                    test_add(x);
+                }
             }
         }));
     }
 
-    for _ in 0..1 {
+    for _ in 0..MAX_TASKS {
         let tx = s.clone();
         handles.push(task::spawn(async move {
-            for _ in 0..MAX_TASKS {
+            // for _ in 0..MAX_TASKS {
             for i in 0..ITEM_PER_TASK {
                 tx.send(i).await.unwrap();
             }
-        }
+            // }
         }));
     }
 
@@ -194,6 +209,7 @@ async fn benchmark_lfsrb_cft(capacity: usize, shards: usize) {
         let handler = spawn_with_cft(TaskRole::Dequeue, rb.clone(), async move {
             let mut counter: usize = 0;
             loop {
+                // let item = rb.dequeue().await;
                 let item = rb.dequeue_full().await;
                 match item {
                     Some(vec) => {
@@ -337,7 +353,7 @@ async fn benchmark_lfsrb_shiftby(capacity: usize, shards: usize) {
 
 async fn benchmark_lfsrb_barrier_shiftby(capacity: usize, shards: usize) {
     let max_items: usize = capacity;
-    
+
     let rb = Arc::new(LFShardedRingBuf::new(max_items, shards));
 
     // barrier used to make sure all tasks are operating at the same time
@@ -432,7 +448,7 @@ async fn benchmark_pin(capacity: usize, shards: usize) {
     // }
 
     // spawn enq tasks with shift by policy
-    for i in 0..MAX_THREADS {
+    for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
         let handler: tokio::task::JoinHandle<()> =
             spawn_buffer_task(ShardPolicy::Pin { initial_index: i }, async move {
@@ -444,15 +460,20 @@ async fn benchmark_pin(capacity: usize, shards: usize) {
     }
 
     // for i in 0..MAX_THREADS {
-    for i in 0..MAX_TASKS {
+    for i in 0..MAX_DEQ {
         let rb = Arc::clone(&rb);
         let handler: tokio::task::JoinHandle<usize> =
-            spawn_buffer_task(ShardPolicy::Pin { initial_index: i}, async move {
+            spawn_buffer_task(ShardPolicy::Pin { initial_index: i }, async move {
                 let mut counter: usize = 0;
                 loop {
                     let item = rb.dequeue_full().await;
                     match item {
-                        Some(_) => counter += 1,
+                        Some(val) => {
+                            counter += 1;
+                            for x in val {
+                                test_add(x);
+                            }
+                        }
                         None => break,
                     }
                 }
@@ -461,7 +482,7 @@ async fn benchmark_pin(capacity: usize, shards: usize) {
         deq_threads.push(handler);
     }
 
-    // for i in 0..MAX_TASKS {
+    // for i in 0..1 {
     //     let rb = Arc::clone(&rb);
     //     let handler: tokio::task::JoinHandle<usize> =
     //         spawn_buffer_task(ShardPolicy::Pin { initial_index: i}, async move {
@@ -517,25 +538,25 @@ fn benchmark_multithreaded(c: &mut Criterion) {
     //     },
     // );
 
-    c.bench_with_input(
-        BenchmarkId::new("kanal_async", BASE_CAPACITY),
-        &BASE_CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_kanal_async(s).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+    // c.bench_with_input(
+    //     BenchmarkId::new("kanal_async", BASE_CAPACITY),
+    //     &BASE_CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_kanal_async(s).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
 
-                total
-            });
-        },
-    );
+    //             total
+    //         });
+    //     },
+    // );
 
     // c.bench_with_input(
     //     BenchmarkId::new("1shard_buffer_sb", CAPACITY),
@@ -857,25 +878,25 @@ fn benchmark_multithreaded(c: &mut Criterion) {
     //     },
     // );
 
-    c.bench_with_input(
-        BenchmarkId::new("testshard_buffer_pin", CAPACITY),
-        &CAPACITY,
-        |b, &s| {
-            // Insert a call to `to_async` to convert the bencher to async mode.
-            // The timing loops are the same as with the normal bencher.
-            b.to_async(&runtime).iter_custom(|iters| async move {
-                let mut total = Duration::ZERO;
-                for _i in 0..iters {
-                    let start = Instant::now();
-                    benchmark_pin(s,MAX_THREADS).await;
-                    let end = Instant::now();
-                    total += end - start;
-                }
+    // c.bench_with_input(
+    //     BenchmarkId::new("testshard_buffer_pin", CAPACITY),
+    //     &CAPACITY,
+    //     |b, &s| {
+    //         // Insert a call to `to_async` to convert the bencher to async mode.
+    //         // The timing loops are the same as with the normal bencher.
+    //         b.to_async(&runtime).iter_custom(|iters| async move {
+    //             let mut total = Duration::ZERO;
+    //             for _i in 0..iters {
+    //                 let start = Instant::now();
+    //                 benchmark_pin(s, MAX_SHARD_TEST).await;
+    //                 let end = Instant::now();
+    //                 total += end - start;
+    //             }
 
-                total
-            });
-        },
-    );
+    //             total
+    //         });
+    //     },
+    // );
 
     // c.bench_with_input(
     //     BenchmarkId::new("8shard_buffer_cft", CAPACITY),
