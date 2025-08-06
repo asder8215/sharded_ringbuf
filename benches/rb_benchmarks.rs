@@ -26,7 +26,7 @@ const CAPACITY: usize = BASE_CAPACITY;
 
 // const CAPACITY: usize = 500000;
 const ITEM_PER_TASK: u128 = 5;
-const FUNC_TO_TEST: usize = 2;
+const FUNC_TO_TEST: usize = 1;
 
 
 fn test_func(x: u128) -> u128 {
@@ -509,11 +509,14 @@ async fn benchmark_pin(capacity: usize, shards: usize) {
     // spawn enq tasks with shift by policy
     for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
-        let handler: tokio::task::JoinHandle<()> =
+        let handler =
             spawn_buffer_task(ShardPolicy::Pin { initial_index: i }, async move {
+                let mut counter:usize = 0;
                 for i in 0..ITEM_PER_TASK {
                     rb.enqueue(i).await;
+                    counter += 1;
                 }
+                counter
             });
         enq_threads.push(handler);
     }

@@ -503,21 +503,15 @@ impl<T> LFShardedRingBuf<T> {
     #[inline]
     fn fetch_item(&self, item_cell: *mut MaybeUninit<*mut T>) -> T {
         if size_of::<T>() > size_of::<*mut T>() {
-            // println!("I'm here");
             // pointer to T is dropped, but T is taken safely
             let item = unsafe { *Box::from_raw((*item_cell).assume_init()) };
             item
         } else if size_of::<T>() > 0 {
             // we get the value of T safely while freeing it
-            // println!("here");
-            // unsafe { println!("I see {:?}", ((*item_cell).assume_init()))};
-            // unsafe { println!("Again I see {:?}", ((*item_cell).assume_init()))};
-
-            // let item = unsafe {ptr::read((*item_cell).assume_init())};
-            // let item = unsafe {ptr::read((*item_cell).assume_init())};
-            let item = unsafe { transmute_copy(&(*item_cell).assume_init()) };
-            // println!("I'm here");
-            // println!("The item I got is {:#?}", item);
+            let item = unsafe { ptr::read((*item_cell).as_ptr() as *const T) };
+            unsafe {
+                ptr::drop_in_place((*item_cell).as_mut_ptr());
+            }
             item
         } else {
             // ZST should just get zeroed out bytes
@@ -789,10 +783,25 @@ impl<T> LFShardedRingBuf<T> {
             let stop_index = inner.enqueue_index.load(Ordering::Relaxed) % inner.items.len();
             while drop_index != stop_index {
                 // SAFETY: This will only clear out initialized values that have not
-                // been dequeued. Note here that this method uses Relaxed loads.
-                unsafe {
-                    ptr::drop_in_place((*self.inner_rb[shard].items[drop_index].get()).as_mut_ptr())
-                }
+                // been dequeued. ZSTs will be skipped.
+                // unsafe {
+                //     ptr::drop_in_place((*self.inner_rb[shard].items[drop_index].get()).as_mut_ptr())
+                // }
+                let cell = inner.items[drop_index].get();
+                if size_of::<T>() > size_of::<*mut T>() {
+                    // SAFETY: If the T >= *mut T, then there's allocation for both the 
+                    // heap memory and T. Need to drop both
+                    let inner_ptr = unsafe { (*cell).assume_init() };
+                    unsafe {
+                        let _ = Box::from_raw(inner_ptr);
+                    }
+                } else if size_of::<T>() > 0 {
+                    // SAFETY: If *mut T >= T > 0, then this T was bitcopied
+                    // Just drop T 
+                    unsafe {
+                        ptr::drop_in_place((*cell).as_mut_ptr());
+                    }
+                } 
                 drop_index = (drop_index + 1) % self.inner_rb[shard].items.len();
             }
             self.inner_rb[shard]
@@ -829,13 +838,28 @@ impl<T> LFShardedRingBuf<T> {
             let mut drop_index = inner.dequeue_index.load(Ordering::Acquire) % inner.items.len();
             let stop_index = inner.enqueue_index.load(Ordering::Acquire) % inner.items.len();
             while drop_index != stop_index {
-                // SAFETY: This will only clear out initialized values that have not
-                // been dequeued.
-                unsafe {
-                    ptr::drop_in_place(
-                        (*self.inner_rb[shard_ind].items[drop_index].get()).as_mut_ptr(),
-                    )
-                }
+               // SAFETY: This will only clear out initialized values that have not
+                // been dequeued. ZSTs will be skipped.
+                // unsafe {
+                //     ptr::drop_in_place(
+                //         (*self.inner_rb[shard_ind].items[drop_index].get()).as_mut_ptr(),
+                //     )
+                // }
+                let cell = inner.items[drop_index].get();
+                if size_of::<T>() > size_of::<*mut T>() {
+                    // SAFETY: If the T >= *mut T, then there's allocation for both the 
+                    // heap memory and T. Need to drop both
+                    let inner_ptr = unsafe { (*cell).assume_init() };
+                    unsafe {
+                        let _ = Box::from_raw(inner_ptr);
+                    }
+                } else if size_of::<T>() > 0 {
+                    // SAFETY: If *mut T >= T > 0, then this T was bitcopied
+                    // Just drop T 
+                    unsafe {
+                        ptr::drop_in_place((*cell).as_mut_ptr());
+                    }
+                } 
                 drop_index = (drop_index + 1) % self.inner_rb[shard_ind].items.len();
             }
             self.inner_rb[shard_ind]
@@ -1744,23 +1768,24 @@ impl<T> Drop for InnerRingBuffer<T> {
     fn drop(&mut self) {
         for item_ind in 0..self.items.len() {
             if self.is_item_in_shard(item_ind) {
-                let ptr = self.items[item_ind].get();
-                if !ptr.is_null() {
-                    // SAFETY: I know that if the ptr isn't null, that means there is
-                    // an item here, so we drop both the heap memory allocation and the
-                    // item allocation
+                let cell = self.items[item_ind].get();
+                if size_of::<T>() > size_of::<*mut T>() {
+                    // SAFETY: If the T >= *mut T, then there's allocation for both the 
+                    // heap memory and T. Need to drop both
+                    let inner_ptr = unsafe { (*cell).assume_init() };
                     unsafe {
-                        let _ = Box::from_raw(ptr as *mut T);
+                        let _ = Box::from_raw(inner_ptr);
                     }
-                } else {
-                    // SAFETY: If the ptr is null, then there's no item here, but we still
-                    // need to drop the heap allocation for the MaybeUninit
-                    // Because MaybeUninit<T> doesn't implement drop itself on T,
-                    // then that's okay to use a Box here to just drop the MaybeUninit.
+                } else if size_of::<T>() > 0 {
+                    // SAFETY: If *mut T >= T > 0, then this T was bitcopied
+                    // Just drop T 
                     unsafe {
-                        let _ = Box::from_raw(ptr);
+                        ptr::drop_in_place((*cell).as_mut_ptr());
                     }
-                }
+                } 
+                // If it falls through here 
+                // I know that the T wasn't put up on the buffer because it is a ZST, 
+                // so we don't need to call any drops.
             }
         }
     }
