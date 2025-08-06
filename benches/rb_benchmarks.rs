@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use kanal::bounded_async;
-use lf_shardedringbuf::{LFShardedRingBuf, TaskRole, spawn_buffer_task, spawn_with_cft};
+use lf_shardedringbuf::{spawn_bounded_enqueuer, spawn_buffer_task, spawn_unbounded_dequeuer, spawn_unbounded_dequeuer_full, spawn_with_cft, LFShardedRingBuf, TaskRole};
 use lf_shardedringbuf::{ShardPolicy, spawn_assigner, terminate_assigner};
 use std::thread::sleep;
 use std::{
@@ -26,14 +26,73 @@ const CAPACITY: usize = BASE_CAPACITY;
 
 // const CAPACITY: usize = 500000;
 const ITEM_PER_TASK: u128 = 5;
+const FUNC_TO_TEST: usize = 2;
 
-fn test_add(x: u128) -> u128 {
+
+fn test_func(x: u128) -> u128 {
+
+    match FUNC_TO_TEST {
+        0 => {
+            mult_add_ops(x)
+        },
+        1 => {
+            fib(x)
+        },
+        2 => {
+            prime_sieve(x)
+        },
+        3 => {
+            mul_stress(x as usize)
+        }
+        _ => {
+            todo!()
+        }
+    }
+}
+
+fn mult_add_ops(x: u128) -> u128 {
     let mut y = x;
-    // sleep(Duration::from_nanos(10));
     y = y.wrapping_mul(31);
     y = y.rotate_left(7);
     y = y.wrapping_add(1);
     y
+}
+
+fn fib(x: u128) -> u128 {
+    let mut a = 0u128;
+    let mut b = 1u128;
+    for _ in 0..x {
+        let tmp = a + b;
+        a = b;
+        b = tmp;
+    }
+    a
+}
+
+fn prime_sieve(x: u128) -> u128 {
+    let mut is_prime = vec![true; x as usize];
+    let mut count = 0;
+
+    for i in 2..x {
+        if is_prime[i as usize] {
+            count += 1;
+            let mut j = i * 2;
+            while j < x {
+                is_prime[j as usize] = false;
+                j += i;
+            }
+        }
+    }
+
+    count
+}
+
+fn mul_stress(iter: usize) -> u128 {
+    let mut acc = 1u128;
+    for i in 1..=iter as u128 {
+        acc = acc.wrapping_mul(i ^ 0xdeadbeefdeadbeef);
+    }
+    acc
 }
 
 async fn benchmark_kanal_async(c: usize) {
@@ -48,7 +107,7 @@ async fn benchmark_kanal_async(c: usize) {
             for _ in 0..MAX_TASKS {
                 for _ in 0..ITEM_PER_TASK {
                     let x = rx.recv().await.unwrap();
-                    test_add(x);
+                    test_func(x);
                 }
             }
         }));
@@ -459,27 +518,53 @@ async fn benchmark_pin(capacity: usize, shards: usize) {
         enq_threads.push(handler);
     }
 
+    // let items = (0..=ITEM_PER_TASK).collect::<Vec<_>>().into_iter();
+    // let items = 0..=ITEM_PER_TASK;
+    // for i in 0..MAX_TASKS {
+    //     let handle = spawn_bounded_enqueuer(
+    //         rb.clone(),
+    //         ShardPolicy::Pin {
+    //             initial_index: i,
+    //         },
+    //         0..=ITEM_PER_TASK,
+    //     );
+    //     enq_threads.push(handle);
+    // }
+
     // for i in 0..MAX_THREADS {
+    // for i in 0..MAX_DEQ {
+    //     let rb = Arc::clone(&rb);
+    //     let handler: tokio::task::JoinHandle<usize> =
+    //         spawn_buffer_task(ShardPolicy::Pin { initial_index: i }, async move {
+    //             let mut counter: usize = 0;
+    //             loop {
+    //                 let item = rb.dequeue_full().await;
+    //                 match item {
+    //                     Some(val) => {
+    //                         counter += 1;
+    //                         for x in val {
+    //                             test_func(x);
+    //                         }
+    //                     }
+    //                     None => break,
+    //                 }
+    //             }
+    //             counter
+    //         });
+    //     deq_threads.push(handler);
+    // }
+
     for i in 0..MAX_DEQ {
-        let rb = Arc::clone(&rb);
-        let handler: tokio::task::JoinHandle<usize> =
-            spawn_buffer_task(ShardPolicy::Pin { initial_index: i }, async move {
-                let mut counter: usize = 0;
-                loop {
-                    let item = rb.dequeue_full().await;
-                    match item {
-                        Some(val) => {
-                            counter += 1;
-                            for x in val {
-                                test_add(x);
-                            }
-                        }
-                        None => break,
-                    }
-                }
-                counter
-            });
-        deq_threads.push(handler);
+        let handle = spawn_unbounded_dequeuer_full(
+            rb.clone(),
+            ShardPolicy::Pin {
+                initial_index: i,
+            },
+            |x| {
+                test_func(x);
+            },
+        );
+        deq_threads.push(handle);
     }
 
     // for i in 0..1 {
