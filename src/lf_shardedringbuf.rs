@@ -53,7 +53,7 @@ pub struct LFShardedRingBuf<T> {
 #[derive(Debug, Default)]
 struct InnerRingBuffer<T> {
     /// Box containing the content of the buffer
-    items: Box<[UnsafeCell<MaybeUninit<T>>]>,
+    items: Box<[CachePadded<UnsafeCell<MaybeUninit<T>>>]>,
     /// Where to enqueue at in the Box
     enqueue_index: AtomicUsize,
     /// Where to dequeue at in the Box
@@ -69,7 +69,7 @@ impl<T> InnerRingBuffer<T> {
             items: {
                 let mut vec = Vec::with_capacity(capacity);
                 for _i in 0..capacity {
-                    vec.push(UnsafeCell::new(MaybeUninit::uninit()));
+                    vec.push(CachePadded::new(UnsafeCell::new(MaybeUninit::uninit())));
                 }
                 vec.into_boxed_slice()
             },
@@ -319,7 +319,7 @@ impl<T> LFShardedRingBuf<T> {
                 break;
             }
 
-            if self.acquire_shard(current) {
+            // if self.acquire_shard(current) {
                 /*
                  * Note here we don't check if the shard is full or empty first
                  * That's because these shard checks are done in an eventual memory
@@ -349,7 +349,7 @@ impl<T> LFShardedRingBuf<T> {
                      */
                     self.shard_locks[current].store(false, Ordering::Relaxed);
                 }
-            }
+            // }
 
             if matches!(get_shard_policy(), ShardPolicyKind::Pin) {
                 yield_now().await;
@@ -394,7 +394,7 @@ impl<T> LFShardedRingBuf<T> {
         // we use fetch add here because we want to obtain the previous value
         // to dequeue while also decrementing this index (separate load and store
         // incurs more cost)
-        let enqueue_index = inner.enqueue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
+        let enqueue_index = inner.enqueue_index.fetch_add(1, Ordering::AcqRel) % inner.items.len();
         let item_cell = inner.items[enqueue_index].get();
         // SAFETY: Only one thread will perform this operation and write to this
         // item cell
@@ -483,7 +483,7 @@ impl<T> LFShardedRingBuf<T> {
         // we use fetch add here because we want to obtain the previous value
         // to dequeue while also decrementing this index (separate load and store
         // incurs more cost)
-        let dequeue_index = inner.dequeue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
+        let dequeue_index = inner.dequeue_index.fetch_add(1, Ordering::AcqRel) % inner.items.len();
 
         // SAFETY: Only one thread will perform this operation
         // And it's guaranteed that an item will exist here
@@ -837,8 +837,8 @@ impl<T> LFShardedRingBuf<T> {
         let inner = &self.inner_rb[shard_ind];
         // use these values as monotonic counter than indices
         let (enq_ind, deq_ind) = (
-            inner.enqueue_index.load(Ordering::Relaxed),
-            inner.dequeue_index.load(Ordering::Relaxed),
+            inner.enqueue_index.load(Ordering::Acquire),
+            inner.dequeue_index.load(Ordering::Acquire),
         );
         let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == 0
@@ -918,8 +918,8 @@ impl<T> LFShardedRingBuf<T> {
         let item_len = inner.items.len();
         // use these values as monotonic counter than indices
         let (enq_ind, deq_ind) = (
-            inner.enqueue_index.load(Ordering::Relaxed),
-            inner.dequeue_index.load(Ordering::Relaxed),
+            inner.enqueue_index.load(Ordering::Acquire),
+            inner.dequeue_index.load(Ordering::Acquire),
         );
         let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == item_len

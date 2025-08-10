@@ -34,15 +34,15 @@ struct Message {
     item_one: usize,
     item_two: usize,
     item_three: usize,
-    item_four: usize,
-    item_five: usize,
-    item_six: usize,
+    // item_four: usize,
+    // item_five: usize,
+    // item_six: usize,
 }
 
-// static msg:Message = Message {item_one: 1, item_two: 2, item_three: 3};
+static msg:Message = Message {item_one: 1, item_two: 2, item_three: 3};
 // static msg:Message = Message {item_one: 1, item_two: 2, item_three: 3, item_four: 4};
 // static msg:Message = Message {item_one: 1, item_two: 2, item_three: 3, item_four: 4, item_five: 5};
-static msg:Message = Message {item_one: 1, item_two: 2, item_three: 3, item_four: 4, item_five: 5, item_six: 6};
+// static msg:Message = Message {item_one: 1, item_two: 2, item_three: 3, item_four: 4, item_five: 5, item_six: 6};
 // static msg:Message = Message {item_one: 1, item_two: 2};
 // static msg:Message = Message {item_one: 1};
 
@@ -136,7 +136,7 @@ async fn benchmark_kanal_async(c: usize) {
             for _ in 0..MAX_TASKS {
                 for _ in 0..ITEM_PER_TASK {
                     let x: Message = rx.recv().await.unwrap();
-                    test_func(x.item_six as u128);
+                    test_func(6 as u128);
                 }
             }
         }));
@@ -593,7 +593,7 @@ async fn benchmark_pin(capacity: usize, shards: usize) {
                 initial_index: i,
             },
             |x:Message| {
-                test_func(x.item_six as u128);
+                test_func(6 as u128);
                 // println!("{:?}",x);
             },
         );
