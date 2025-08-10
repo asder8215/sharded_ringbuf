@@ -505,6 +505,10 @@ impl<T> LFShardedRingBuf<T> {
         if size_of::<T>() > size_of::<*mut T>() {
             // pointer to T is dropped, but T is taken safely
             let item = unsafe { *Box::from_raw((*item_cell).assume_init()) };
+            // let item = unsafe { ptr::read((*item_cell).assume_init()) };
+            // unsafe {
+            //     ptr::drop_in_place((*item_cell).assume_init());
+            // }
             item
         } else if size_of::<T>() > 0 {
             // we get the value of T safely while freeing it

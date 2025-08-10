@@ -14,8 +14,8 @@ use tokio::task;
 // https://github.com/fereidani/rust-channel-benchmarks/tree/main?tab=readme-ov-file
 const MAX_SHARDS: [usize; 7] = [4, 8, 16, 32, 64, 128, 256];
 const MAX_TASKS: usize = 1000;
-const MAX_DEQ: usize = 8;
-const MAX_THREADS: usize = 8;
+const MAX_DEQ: usize = 4;
+const MAX_THREADS: usize = 4;
 const BASE_CAPACITY: usize = 128;
 const MAX_SHARD_TEST: usize = MAX_THREADS;
 // const MAX_TASKS_F64: f64 = MAX_TASKS as f64;
@@ -25,8 +25,37 @@ const CAPACITY: usize = BASE_CAPACITY;
 // const    CAPACITY: usize = BASE_CAPACITY * MAX_THREADS * ((MAX_TASKS).isqrt() as usize);
 
 // const CAPACITY: usize = 500000;
-const ITEM_PER_TASK: u128 = 5;
-const FUNC_TO_TEST: usize = 1;
+const ITEM_PER_TASK: usize = 5;
+const FUNC_TO_TEST: usize = 2;
+
+
+#[derive(Clone, Debug)]
+struct Message {
+    item_one: usize,
+    item_two: usize,
+    item_three: usize,
+    item_four: usize,
+    item_five: usize,
+    item_six: usize,
+}
+
+// static msg:Message = Message {item_one: 1, item_two: 2, item_three: 3};
+// static msg:Message = Message {item_one: 1, item_two: 2, item_three: 3, item_four: 4};
+// static msg:Message = Message {item_one: 1, item_two: 2, item_three: 3, item_four: 4, item_five: 5};
+static msg:Message = Message {item_one: 1, item_two: 2, item_three: 3, item_four: 4, item_five: 5, item_six: 6};
+// static msg:Message = Message {item_one: 1, item_two: 2};
+// static msg:Message = Message {item_one: 1};
+
+
+
+
+// { let msg_try = Message {item_one: 1, item_two: 2, item_three: 3}; 
+// let mut iter = Vec::new();
+// for _ in 0..250000 {
+//     iter.push(msg_try);
+// }
+// iter.iter().into_iter()
+// };
 
 
 fn test_func(x: u128) -> u128 {
@@ -106,8 +135,8 @@ async fn benchmark_kanal_async(c: usize) {
         handles.push(task::spawn(async move {
             for _ in 0..MAX_TASKS {
                 for _ in 0..ITEM_PER_TASK {
-                    let x = rx.recv().await.unwrap();
-                    test_func(x);
+                    let x: Message = rx.recv().await.unwrap();
+                    test_func(x.item_six as u128);
                 }
             }
         }));
@@ -118,7 +147,7 @@ async fn benchmark_kanal_async(c: usize) {
         handles.push(task::spawn(async move {
             // for _ in 0..MAX_TASKS {
             for i in 0..ITEM_PER_TASK {
-                tx.send(i).await.unwrap();
+                tx.send(msg.clone()).await.unwrap();
             }
             // }
         }));
@@ -214,7 +243,7 @@ async fn benchmark_async_channel(c: usize) {
         let tx = s.clone();
         handles.push(task::spawn(async move {
             for i in 0..ITEM_PER_TASK {
-                tx.send(i).await.unwrap();
+                tx.send(msg.clone()).await.unwrap();
             }
         }));
     }
@@ -513,7 +542,7 @@ async fn benchmark_pin(capacity: usize, shards: usize) {
             spawn_buffer_task(ShardPolicy::Pin { initial_index: i }, async move {
                 let mut counter:usize = 0;
                 for i in 0..ITEM_PER_TASK {
-                    rb.enqueue(i).await;
+                    rb.enqueue(msg.clone()).await;
                     counter += 1;
                 }
                 counter
@@ -563,19 +592,20 @@ async fn benchmark_pin(capacity: usize, shards: usize) {
             ShardPolicy::Pin {
                 initial_index: i,
             },
-            |x| {
-                test_func(x);
+            |x:Message| {
+                test_func(x.item_six as u128);
+                // println!("{:?}",x);
             },
         );
         deq_threads.push(handle);
     }
 
-    // for i in 0..1 {
+    // for i in 0..MAX_TASKS {
     //     let rb = Arc::clone(&rb);
     //     let handler: tokio::task::JoinHandle<usize> =
     //         spawn_buffer_task(ShardPolicy::Pin { initial_index: i}, async move {
     //             let mut counter: usize = 0;
-    //             loop {
+    //             for i in 0..ITEM_PER_TASK {
     //                 let item = rb.dequeue().await;
     //                 match item {
     //                     Some(_) => counter += 1,
