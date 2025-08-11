@@ -521,7 +521,6 @@ async fn test_cft_uneven_tasks() {
 
         for enq in enq_threads {
             enq.await.unwrap();
-            // println!("I'm done enqueueing!");
         }
 
         // guarantees that the dequeuer finish remaining jobs in the buffer
@@ -613,14 +612,12 @@ async fn test_cft_more_deq_than_enq() {
 
         // Spawn MAX_TASKS dequeuer tasks
         for _ in 0..MAX_TASKS * 2 {
-            let rb = Arc::clone(&rb);
             let handler = cft_spawn_dequeuer_unbounded(rb.clone(), |_| {});
             deq_threads.push(handler);
         }
 
         // Spawn MAX_TASKS enqueuer tasks
         for _ in 0..MAX_TASKS {
-            let rb = Arc::clone(&rb);
             let enq_handler = cft_spawn_enqueuer_with_iterator(rb.clone(), 0..2 * MAX_ITEMS);
             enq_threads.push(enq_handler);
         }
@@ -665,14 +662,12 @@ async fn test_cft_more_deq_items_than_enq() {
 
         // Spawn MAX_TASKS dequeuer tasks
         for _ in 0..2 {
-            let rb = Arc::clone(&rb);
             let handler = cft_spawn_dequeuer_bounded(rb.clone(), (3 * MAX_ITEMS) / 2, |_| {});
             deq_threads.push(handler);
         }
 
         // Spawn MAX_TASKS enqueuer tasks
         for i in 1..3 {
-            let rb = Arc::clone(&rb);
             let enq_handler = cft_spawn_enqueuer_with_iterator(rb.clone(), 0..MAX_ITEMS * i);
             enq_threads.push(enq_handler);
         }

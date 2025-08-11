@@ -37,8 +37,13 @@ pub struct ShardedRingBuf<T> {
     /// Poison signal of the ring buffer
     poisoned: AtomicBool,
 
+    // These are used in the singled threaded
+    // Tokio runtime cases to optimize on context
+    // switching
+    /// signals that there is a job to enqueue on the buffer
     job_space_notif: Notify,
-    job_available_notif: Notify,
+    /// signals that there is a job posted to dequeue on the buffer
+    job_post_notif: Notify,
 
     // The fields below are for CFT policy
     /// The head of the TaskNode linked list for CFT
@@ -136,7 +141,7 @@ impl<T> ShardedRingBuf<T> {
             },
             poisoned: AtomicBool::new(false),
             job_space_notif: Notify::new(),
-            job_available_notif: Notify::new(),
+            job_post_notif: Notify::new(),
             head: AtomicPtr::new(ptr::null_mut()),
             assigner_spawned: AtomicBool::new(false),
             assigner_terminate: AtomicBool::new(false),
@@ -422,13 +427,13 @@ impl<T> ShardedRingBuf<T> {
                     unsafe {
                         (*item_cell).write(item);
                     }
-                    self.job_available_notif.notify_one();
+                    self.job_post_notif.notify_one();
                     return;
                 }
 
                 // we're using a notify for the enqueuer
                 // it minimizes the number times we context switch
-                self.job_available_notif.notify_waiters();
+                self.job_post_notif.notify_waiters();
                 self.job_space_notif.notified().await;
             }
         }
@@ -558,7 +563,7 @@ impl<T> ShardedRingBuf<T> {
                     return None;
                 }
 
-                self.job_available_notif.notified().await;
+                self.job_post_notif.notified().await;
 
                 let inner = &self.inner_rb[0];
                 let mut vec_items = Vec::new();
@@ -611,7 +616,7 @@ impl<T> ShardedRingBuf<T> {
     pub fn poison(&self) {
         self.poisoned.store(true, Ordering::Relaxed);
         if self.get_num_of_shards() == 1 && Handle::current().metrics().num_workers() == 1 {
-            self.job_available_notif.notify_waiters();
+            self.job_post_notif.notify_waiters();
         }
     }
 
