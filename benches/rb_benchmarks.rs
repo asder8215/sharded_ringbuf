@@ -1,6 +1,9 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use kanal::bounded_async;
-use lf_shardedringbuf::{spawn_bounded_enqueuer, spawn_buffer_task, spawn_unbounded_dequeuer, spawn_unbounded_dequeuer_full, spawn_with_cft, LFShardedRingBuf, TaskRole};
+use lf_shardedringbuf::{
+    LFShardedRingBuf, TaskRole, spawn_bounded_enqueuer, spawn_buffer_task,
+    spawn_unbounded_dequeuer, spawn_unbounded_dequeuer_full, spawn_with_cft,
+};
 use lf_shardedringbuf::{ShardPolicy, spawn_assigner, terminate_assigner};
 use std::thread::sleep;
 use std::{
@@ -14,8 +17,8 @@ use tokio::task;
 // https://github.com/fereidani/rust-channel-benchmarks/tree/main?tab=readme-ov-file
 const MAX_SHARDS: [usize; 7] = [4, 8, 16, 32, 64, 128, 256];
 const MAX_TASKS: usize = 1000;
-const MAX_DEQ: usize = 4;
-const MAX_THREADS: usize = 4;
+const MAX_DEQ: usize = 8;
+const MAX_THREADS: usize = 8;
 const BASE_CAPACITY: usize = 128;
 const MAX_SHARD_TEST: usize = MAX_THREADS;
 // const MAX_TASKS_F64: f64 = MAX_TASKS as f64;
@@ -28,7 +31,6 @@ const CAPACITY: usize = BASE_CAPACITY;
 const ITEM_PER_TASK: usize = 5;
 const FUNC_TO_TEST: usize = 2;
 
-
 #[derive(Clone, Debug)]
 struct Message {
     item_one: usize,
@@ -39,17 +41,18 @@ struct Message {
     // item_six: usize,
 }
 
-static msg:Message = Message {item_one: 1, item_two: 2, item_three: 3};
+static msg: Message = Message {
+    item_one: 1,
+    item_two: 2,
+    item_three: 3,
+};
 // static msg:Message = Message {item_one: 1, item_two: 2, item_three: 3, item_four: 4};
 // static msg:Message = Message {item_one: 1, item_two: 2, item_three: 3, item_four: 4, item_five: 5};
 // static msg:Message = Message {item_one: 1, item_two: 2, item_three: 3, item_four: 4, item_five: 5, item_six: 6};
 // static msg:Message = Message {item_one: 1, item_two: 2};
 // static msg:Message = Message {item_one: 1};
 
-
-
-
-// { let msg_try = Message {item_one: 1, item_two: 2, item_three: 3}; 
+// { let msg_try = Message {item_one: 1, item_two: 2, item_three: 3};
 // let mut iter = Vec::new();
 // for _ in 0..250000 {
 //     iter.push(msg_try);
@@ -57,22 +60,12 @@ static msg:Message = Message {item_one: 1, item_two: 2, item_three: 3};
 // iter.iter().into_iter()
 // };
 
-
 fn test_func(x: u128) -> u128 {
-
     match FUNC_TO_TEST {
-        0 => {
-            mult_add_ops(x)
-        },
-        1 => {
-            fib(x)
-        },
-        2 => {
-            prime_sieve(x)
-        },
-        3 => {
-            mul_stress(x as usize)
-        }
+        0 => mult_add_ops(x),
+        1 => fib(x),
+        2 => prime_sieve(x),
+        3 => mul_stress(x as usize),
         _ => {
             todo!()
         }
@@ -538,15 +531,14 @@ async fn benchmark_pin(capacity: usize, shards: usize) {
     // spawn enq tasks with shift by policy
     for i in 0..MAX_TASKS {
         let rb = Arc::clone(&rb);
-        let handler =
-            spawn_buffer_task(ShardPolicy::Pin { initial_index: i }, async move {
-                let mut counter:usize = 0;
-                for i in 0..ITEM_PER_TASK {
-                    rb.enqueue(msg.clone()).await;
-                    counter += 1;
-                }
-                counter
-            });
+        let handler = spawn_buffer_task(ShardPolicy::Pin { initial_index: i }, async move {
+            let mut counter: usize = 0;
+            for i in 0..ITEM_PER_TASK {
+                rb.enqueue(msg.clone()).await;
+                counter += 1;
+            }
+            counter
+        });
         enq_threads.push(handler);
     }
 
@@ -589,10 +581,8 @@ async fn benchmark_pin(capacity: usize, shards: usize) {
     for i in 0..MAX_DEQ {
         let handle = spawn_unbounded_dequeuer_full(
             rb.clone(),
-            ShardPolicy::Pin {
-                initial_index: i,
-            },
-            |x:Message| {
+            ShardPolicy::Pin { initial_index: i },
+            |x: Message| {
                 test_func(6 as u128);
                 // println!("{:?}",x);
             },

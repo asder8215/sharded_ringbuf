@@ -392,7 +392,7 @@ async fn test_full_clear_empty() {
         for enq in enq_threads {
             enq.await.unwrap();
         }
-
+        println!("{:?}", rb.get_job_count_total());
         assert!(rb.is_full());
 
         rb.clear();
