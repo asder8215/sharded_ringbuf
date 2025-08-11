@@ -1,5 +1,8 @@
 # Change for shardedringbuf:
 
+## In v0.1.1:
+* Changed the enqueue and dequeue indices to Cell usize rather than AtomicUsize in `InnerRingBuffer<T>` because everything is protected under a shard lock.
+
 ## In v0.1.0:
 * A new policy has been made called `CFT` (or Completely Fair Tasks). See `src/task_local_spawn.rs` for more details.
 * Spawn functions have been refactored to specifically call on enqueue and dequeue functions
