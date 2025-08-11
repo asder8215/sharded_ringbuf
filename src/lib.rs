@@ -1,4 +1,4 @@
-//! An async, bounded, lock-free (not formally however), cache-aware ring buffer that can be
+//! A Tokio async, sharded, bounded ring buffer that can be
 //! used in a SPSC, MPSC, and MPMC environment (optimal for MPMC however).
 //!
 //! The key feature of this ring buffer is that it takes a sharded approach to enqueuing
