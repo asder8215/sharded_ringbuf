@@ -7,7 +7,7 @@ use crate::{
 use crossbeam_utils::CachePadded;
 use fastrand::usize as frand;
 use std::{
-    cell::UnsafeCell,
+    cell::{Cell, UnsafeCell},
     fmt::{Debug, Write},
     mem::MaybeUninit,
     ptr,
@@ -60,9 +60,9 @@ struct InnerRingBuffer<T> {
     /// Box containing the content of the buffer
     items: Box<[UnsafeCell<MaybeUninit<T>>]>,
     /// Where to enqueue at in the Box
-    enqueue_index: AtomicUsize,
+    enqueue_index: Cell<usize>,
     /// Where to dequeue at in the Box
-    dequeue_index: AtomicUsize,
+    dequeue_index: Cell<usize>,
 }
 
 /// Implements the InnerRingBuffer functions
@@ -78,8 +78,8 @@ impl<T> InnerRingBuffer<T> {
                 }
                 vec.into_boxed_slice()
             },
-            enqueue_index: AtomicUsize::new(0),
-            dequeue_index: AtomicUsize::new(0),
+            enqueue_index: Cell::new(0),
+            dequeue_index: Cell::new(0),
         }
     }
 
@@ -87,8 +87,8 @@ impl<T> InnerRingBuffer<T> {
     /// indeed contain a valid item. Used in Drop Trait.
     #[inline(always)]
     fn is_item_in_shard(&self, item_ind: usize) -> bool {
-        let enqueue_ind = self.enqueue_index.load(Ordering::Relaxed) % self.items.len();
-        let dequeue_ind = self.dequeue_index.load(Ordering::Relaxed) % self.items.len();
+        let enqueue_ind = self.enqueue_index.get() % self.items.len();
+        let dequeue_ind = self.dequeue_index.get() % self.items.len();
 
         if enqueue_ind > dequeue_ind {
             item_ind < enqueue_ind && item_ind >= dequeue_ind
@@ -371,10 +371,9 @@ impl<T> ShardedRingBuf<T> {
     #[inline(always)]
     fn enqueue_in_shard(&self, shard_ind: usize, item: T) {
         let inner = &self.inner_rb[shard_ind];
-        // we use fetch add here because we want to obtain the previous value
-        // to dequeue while also incrementing this counter (separate load and store
-        // incurs more cost)
-        let enqueue_index = inner.enqueue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
+
+        let enqueue_index = inner.enqueue_index.get() % inner.items.len();
+        inner.enqueue_index.set(inner.enqueue_index.get() + 1);
         let item_cell = inner.items[enqueue_index].get();
         // SAFETY: Only one thread will perform this operation and write to this
         // item cell
@@ -416,13 +415,13 @@ impl<T> ShardedRingBuf<T> {
             }
             loop {
                 let inner = &self.inner_rb[0];
-                let enq_counter = inner.enqueue_index.load(Ordering::Relaxed);
-                let deq_counter = inner.dequeue_index.load(Ordering::Relaxed);
+                let enq_counter = inner.enqueue_index.get();
+                let deq_counter = inner.dequeue_index.get();
                 let jobs = enq_counter.wrapping_sub(deq_counter);
 
                 if jobs != inner.items.len() {
-                    let enqueue_index =
-                        inner.enqueue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
+                    let enqueue_index = inner.enqueue_index.get() % inner.items.len();
+                    inner.enqueue_index.set(inner.enqueue_index.get() + 1);
                     let item_cell = inner.items[enqueue_index].get();
                     unsafe {
                         (*item_cell).write(item);
@@ -459,7 +458,8 @@ impl<T> ShardedRingBuf<T> {
         // we use fetch add here because we want to obtain the previous value
         // to dequeue while also incrementing this counter (separate load and store
         // incurs more cost)
-        let dequeue_index = inner.dequeue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
+        let dequeue_index = inner.dequeue_index.get() % inner.items.len();
+        inner.dequeue_index.set(inner.dequeue_index.get() + 1);
 
         let item_cell = inner.items[dequeue_index].get();
 
@@ -505,14 +505,14 @@ impl<T> ShardedRingBuf<T> {
                 }
 
                 let inner = &self.inner_rb[0];
-                let enq_counter = inner.enqueue_index.load(Ordering::Relaxed);
-                let deq_counter = inner.dequeue_index.load(Ordering::Relaxed);
+                let enq_counter = inner.enqueue_index.get();
+                let deq_counter = inner.dequeue_index.get();
 
                 let jobs = enq_counter.wrapping_sub(deq_counter);
 
                 if jobs != 0 {
-                    let dequeue_index =
-                        inner.dequeue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
+                    let dequeue_index = inner.dequeue_index.get() % inner.items.len();
+                    inner.dequeue_index.set(inner.dequeue_index.get() + 1);
                     // SAFETY: Only one thread will claim this slot and perform this operation
                     // And it's guaranteed that an item will exist here
                     let item = unsafe { (*inner.items[dequeue_index].get()).assume_init_read() };
@@ -574,13 +574,13 @@ impl<T> ShardedRingBuf<T> {
                     if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
                         return None;
                     }
-                    let enq_counter = inner.enqueue_index.load(Ordering::Relaxed);
-                    let deq_counter = inner.dequeue_index.load(Ordering::Relaxed);
+                    let enq_counter = inner.enqueue_index.get();
+                    let deq_counter = inner.dequeue_index.get();
                     let jobs = enq_counter.wrapping_sub(deq_counter);
 
                     if jobs != 0 {
-                        let dequeue_index =
-                            inner.dequeue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
+                        let dequeue_index = inner.dequeue_index.get() % inner.items.len();
+                        inner.dequeue_index.set(inner.dequeue_index.get() + 1);
                         // SAFETY: Only one thread will claim this slot and perform this operation
                         // And it's guaranteed that an item will exist here
                         let item =
@@ -686,8 +686,8 @@ impl<T> ShardedRingBuf<T> {
         // reset each shard's inner ring buffer
         for shard in 0..self.shard_locks.len() {
             let inner = &self.inner_rb[shard];
-            let mut drop_index = inner.dequeue_index.load(Ordering::Relaxed) % inner.items.len();
-            let stop_index = inner.enqueue_index.load(Ordering::Relaxed) % inner.items.len();
+            let mut drop_index = inner.dequeue_index.get() % inner.items.len();
+            let stop_index = inner.enqueue_index.get() % inner.items.len();
             while drop_index != stop_index {
                 // SAFETY: This will only clear out initialized values that have not
                 // been dequeued. Note here that this method uses Relaxed loads.
@@ -696,12 +696,8 @@ impl<T> ShardedRingBuf<T> {
                 }
                 drop_index = (drop_index + 1) % self.inner_rb[shard].items.len();
             }
-            self.inner_rb[shard]
-                .enqueue_index
-                .store(0, Ordering::Relaxed);
-            self.inner_rb[shard]
-                .dequeue_index
-                .store(0, Ordering::Relaxed);
+            self.inner_rb[shard].enqueue_index.set(0);
+            self.inner_rb[shard].dequeue_index.set(0);
         }
     }
 
@@ -727,8 +723,8 @@ impl<T> ShardedRingBuf<T> {
         // reset each shard's inner ring buffer
         for (shard_ind, _guard) in guards.into_iter().enumerate() {
             let inner = &self.inner_rb[shard_ind];
-            let mut drop_index = inner.dequeue_index.load(Ordering::Acquire) % inner.items.len();
-            let stop_index = inner.enqueue_index.load(Ordering::Acquire) % inner.items.len();
+            let mut drop_index = inner.dequeue_index.get() % inner.items.len();
+            let stop_index = inner.enqueue_index.get() % inner.items.len();
             while drop_index != stop_index {
                 // SAFETY: This will only clear out initialized values that have not
                 // been dequeued.
@@ -739,12 +735,8 @@ impl<T> ShardedRingBuf<T> {
                 }
                 drop_index = (drop_index + 1) % self.inner_rb[shard_ind].items.len();
             }
-            self.inner_rb[shard_ind]
-                .enqueue_index
-                .store(0, Ordering::Release);
-            self.inner_rb[shard_ind]
-                .dequeue_index
-                .store(0, Ordering::Release);
+            self.inner_rb[shard_ind].enqueue_index.set(0);
+            self.inner_rb[shard_ind].dequeue_index.set(0);
         }
     }
 
@@ -798,10 +790,7 @@ impl<T> ShardedRingBuf<T> {
     pub fn is_shard_empty(&self, shard_ind: usize) -> bool {
         let inner = &self.inner_rb[shard_ind];
         // use these values as monotonic counter than indices
-        let (enq_ind, deq_ind) = (
-            inner.enqueue_index.load(Ordering::Relaxed),
-            inner.dequeue_index.load(Ordering::Relaxed),
-        );
+        let (enq_ind, deq_ind) = (inner.enqueue_index.get(), inner.dequeue_index.get());
         let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == 0
     }
@@ -818,10 +807,7 @@ impl<T> ShardedRingBuf<T> {
 
         let inner = &self.inner_rb[shard_ind];
         // use these values as monotonic counter than indices
-        let (enq_ind, deq_ind) = (
-            inner.enqueue_index.load(Ordering::Relaxed),
-            inner.dequeue_index.load(Ordering::Relaxed),
-        );
+        let (enq_ind, deq_ind) = (inner.enqueue_index.get(), inner.dequeue_index.get());
         let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == 0
     }
@@ -879,10 +865,7 @@ impl<T> ShardedRingBuf<T> {
         let inner = &self.inner_rb[shard_ind];
         let item_len = inner.items.len();
         // use these values as monotonic counter than indices
-        let (enq_ind, deq_ind) = (
-            inner.enqueue_index.load(Ordering::Relaxed),
-            inner.dequeue_index.load(Ordering::Relaxed),
-        );
+        let (enq_ind, deq_ind) = (inner.enqueue_index.get(), inner.dequeue_index.get());
         let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == item_len
     }
@@ -900,10 +883,7 @@ impl<T> ShardedRingBuf<T> {
         let inner = &self.inner_rb[shard_ind];
         let item_len = inner.items.len();
         // use these values as monotonic counter than indices
-        let (enq_ind, deq_ind) = (
-            inner.enqueue_index.load(Ordering::Relaxed),
-            inner.dequeue_index.load(Ordering::Relaxed),
-        );
+        let (enq_ind, deq_ind) = (inner.enqueue_index.get(), inner.dequeue_index.get());
         let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == item_len
     }
@@ -925,7 +905,7 @@ impl<T> ShardedRingBuf<T> {
 
         // grab enq val
         let inner = &self.inner_rb[shard_ind];
-        let enq_ind = inner.enqueue_index.load(Ordering::Relaxed) % inner.items.len();
+        let enq_ind = inner.enqueue_index.get() % inner.items.len();
 
         Some(enq_ind)
     }
@@ -947,7 +927,7 @@ impl<T> ShardedRingBuf<T> {
 
         // grab enq val
         let inner = &self.inner_rb[shard_ind];
-        let enq_ind = inner.enqueue_index.load(Ordering::Relaxed) % inner.items.len();
+        let enq_ind = inner.enqueue_index.get() % inner.items.len();
 
         Some(enq_ind)
     }
@@ -969,7 +949,7 @@ impl<T> ShardedRingBuf<T> {
 
         // grab deq ind val
         let inner = &self.inner_rb[shard_ind];
-        let deq_ind = inner.dequeue_index.load(Ordering::Relaxed) % inner.items.len();
+        let deq_ind = inner.dequeue_index.get() % inner.items.len();
 
         Some(deq_ind)
     }
@@ -991,7 +971,7 @@ impl<T> ShardedRingBuf<T> {
 
         // grab deq ind val
         let inner = &self.inner_rb[shard_ind];
-        let deq_ind = inner.dequeue_index.load(Ordering::Relaxed) % inner.items.len();
+        let deq_ind = inner.dequeue_index.get() % inner.items.len();
 
         Some(deq_ind)
     }
@@ -1009,10 +989,7 @@ impl<T> ShardedRingBuf<T> {
         }
 
         let inner = &self.inner_rb[shard_ind];
-        let (enq_count, deq_count) = (
-            inner.enqueue_index.load(Ordering::Relaxed),
-            inner.dequeue_index.load(Ordering::Relaxed),
-        );
+        let (enq_count, deq_count) = (inner.enqueue_index.get(), inner.dequeue_index.get());
         let jobs = enq_count.wrapping_sub(deq_count);
         Some(jobs)
     }
@@ -1033,10 +1010,7 @@ impl<T> ShardedRingBuf<T> {
         ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
 
         let inner = &self.inner_rb[shard_ind];
-        let (enq_count, deq_count) = (
-            inner.enqueue_index.load(Ordering::Relaxed),
-            inner.dequeue_index.load(Ordering::Relaxed),
-        );
+        let (enq_count, deq_count) = (inner.enqueue_index.get(), inner.dequeue_index.get());
         let jobs = enq_count.wrapping_sub(deq_count);
         Some(jobs)
     }
@@ -1051,10 +1025,7 @@ impl<T> ShardedRingBuf<T> {
         let mut count = Vec::new();
 
         for shard in &self.inner_rb {
-            let (enq_count, deq_count) = (
-                shard.enqueue_index.load(Ordering::Relaxed),
-                shard.dequeue_index.load(Ordering::Relaxed),
-            );
+            let (enq_count, deq_count) = (shard.enqueue_index.get(), shard.dequeue_index.get());
             let jobs = enq_count.wrapping_sub(deq_count);
             count.push(jobs);
         }
@@ -1081,10 +1052,7 @@ impl<T> ShardedRingBuf<T> {
         // guard for me when it goes to the next iteration
         for (shard_ind, _guard) in guards.into_iter().enumerate() {
             let shard = &self.inner_rb[shard_ind];
-            let (enq_count, deq_count) = (
-                shard.enqueue_index.load(Ordering::Relaxed),
-                shard.dequeue_index.load(Ordering::Relaxed),
-            );
+            let (enq_count, deq_count) = (shard.enqueue_index.get(), shard.dequeue_index.get());
             let jobs = enq_count.wrapping_sub(deq_count);
             count.push(jobs);
         }
@@ -1096,8 +1064,8 @@ impl<T> ShardedRingBuf<T> {
     #[inline(always)]
     fn is_item_in_shard(&self, item_ind: usize, shard_ind: usize) -> bool {
         let inner = &self.inner_rb[shard_ind];
-        let enqueue_ind = inner.enqueue_index.load(Ordering::Relaxed) % inner.items.len();
-        let dequeue_ind = inner.dequeue_index.load(Ordering::Relaxed) % inner.items.len();
+        let enqueue_ind = inner.enqueue_index.get() % inner.items.len();
+        let dequeue_ind = inner.dequeue_index.get() % inner.items.len();
 
         if enqueue_ind > dequeue_ind {
             item_ind < enqueue_ind && item_ind >= dequeue_ind
