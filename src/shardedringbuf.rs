@@ -696,12 +696,8 @@ impl<T> ShardedRingBuf<T> {
                 }
                 drop_index = (drop_index + 1) % self.inner_rb[shard].items.len();
             }
-            self.inner_rb[shard]
-                .enqueue_index
-                .set(0);
-            self.inner_rb[shard]
-                .dequeue_index
-                .set(0);
+            self.inner_rb[shard].enqueue_index.set(0);
+            self.inner_rb[shard].dequeue_index.set(0);
         }
     }
 
@@ -739,12 +735,8 @@ impl<T> ShardedRingBuf<T> {
                 }
                 drop_index = (drop_index + 1) % self.inner_rb[shard_ind].items.len();
             }
-            self.inner_rb[shard_ind]
-                .enqueue_index
-                .set(0);
-            self.inner_rb[shard_ind]
-                .dequeue_index
-                .set(0);
+            self.inner_rb[shard_ind].enqueue_index.set(0);
+            self.inner_rb[shard_ind].dequeue_index.set(0);
         }
     }
 
@@ -798,10 +790,7 @@ impl<T> ShardedRingBuf<T> {
     pub fn is_shard_empty(&self, shard_ind: usize) -> bool {
         let inner = &self.inner_rb[shard_ind];
         // use these values as monotonic counter than indices
-        let (enq_ind, deq_ind) = (
-            inner.enqueue_index.get(),
-            inner.dequeue_index.get(),
-        );
+        let (enq_ind, deq_ind) = (inner.enqueue_index.get(), inner.dequeue_index.get());
         let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == 0
     }
@@ -818,10 +807,7 @@ impl<T> ShardedRingBuf<T> {
 
         let inner = &self.inner_rb[shard_ind];
         // use these values as monotonic counter than indices
-        let (enq_ind, deq_ind) = (
-            inner.enqueue_index.get(),
-            inner.dequeue_index.get(),
-        );
+        let (enq_ind, deq_ind) = (inner.enqueue_index.get(), inner.dequeue_index.get());
         let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == 0
     }
@@ -879,10 +865,7 @@ impl<T> ShardedRingBuf<T> {
         let inner = &self.inner_rb[shard_ind];
         let item_len = inner.items.len();
         // use these values as monotonic counter than indices
-        let (enq_ind, deq_ind) = (
-            inner.enqueue_index.get(),
-            inner.dequeue_index.get(),
-        );
+        let (enq_ind, deq_ind) = (inner.enqueue_index.get(), inner.dequeue_index.get());
         let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == item_len
     }
@@ -900,10 +883,7 @@ impl<T> ShardedRingBuf<T> {
         let inner = &self.inner_rb[shard_ind];
         let item_len = inner.items.len();
         // use these values as monotonic counter than indices
-        let (enq_ind, deq_ind) = (
-            inner.enqueue_index.get(),
-            inner.dequeue_index.get(),
-        );
+        let (enq_ind, deq_ind) = (inner.enqueue_index.get(), inner.dequeue_index.get());
         let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == item_len
     }
@@ -1009,10 +989,7 @@ impl<T> ShardedRingBuf<T> {
         }
 
         let inner = &self.inner_rb[shard_ind];
-        let (enq_count, deq_count) = (
-            inner.enqueue_index.get(),
-            inner.dequeue_index.get(),
-        );
+        let (enq_count, deq_count) = (inner.enqueue_index.get(), inner.dequeue_index.get());
         let jobs = enq_count.wrapping_sub(deq_count);
         Some(jobs)
     }
@@ -1033,10 +1010,7 @@ impl<T> ShardedRingBuf<T> {
         ShardLockGuard::acquire(&self.shard_locks[shard_ind]).await;
 
         let inner = &self.inner_rb[shard_ind];
-        let (enq_count, deq_count) = (
-            inner.enqueue_index.get(),
-            inner.dequeue_index.get(),
-        );
+        let (enq_count, deq_count) = (inner.enqueue_index.get(), inner.dequeue_index.get());
         let jobs = enq_count.wrapping_sub(deq_count);
         Some(jobs)
     }
@@ -1051,10 +1025,7 @@ impl<T> ShardedRingBuf<T> {
         let mut count = Vec::new();
 
         for shard in &self.inner_rb {
-            let (enq_count, deq_count) = (
-                shard.enqueue_index.get(),
-                shard.dequeue_index.get(),
-            );
+            let (enq_count, deq_count) = (shard.enqueue_index.get(), shard.dequeue_index.get());
             let jobs = enq_count.wrapping_sub(deq_count);
             count.push(jobs);
         }
@@ -1081,10 +1052,7 @@ impl<T> ShardedRingBuf<T> {
         // guard for me when it goes to the next iteration
         for (shard_ind, _guard) in guards.into_iter().enumerate() {
             let shard = &self.inner_rb[shard_ind];
-            let (enq_count, deq_count) = (
-                shard.enqueue_index.get(),
-                shard.dequeue_index.get(),
-            );
+            let (enq_count, deq_count) = (shard.enqueue_index.get(), shard.dequeue_index.get());
             let jobs = enq_count.wrapping_sub(deq_count);
             count.push(jobs);
         }
