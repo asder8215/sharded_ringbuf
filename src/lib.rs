@@ -26,10 +26,7 @@
 //! Currently, in the event that a worker thread is unable to enqueue or dequeue an item to a shard
 //! (due to a shard being occupied by another thread or the shard is full/empty), then the worker
 //! thread simply context switches the task (putting it to the back of its queue) and tries working
-//! on a different task that likely operates on a different shard. Doing this instead of using a slot
-//! based approach tends to be faster because 1) context switching task is cheap (since kernel is not involved)
-//! and 2) the synchronization performed in slots end up being costly when it is possible for multiple threads
-//! to contend on a specific shard based on the task they are currently working on
+//! on a different task that likely operates on a different shard.
 
 mod guards;
 mod shard_policies;
