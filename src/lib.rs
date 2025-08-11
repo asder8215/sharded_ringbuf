@@ -32,21 +32,20 @@
 //! to contend on a specific shard based on the task they are currently working on
 
 mod guards;
-mod lf_shardedringbuf;
 mod shard_policies;
+mod shardedringbuf;
 mod task_local_spawn;
 mod task_locals;
 mod task_node;
 
-pub use lf_shardedringbuf::LFShardedRingBuf;
 pub use shard_policies::ShardPolicy;
+pub use shardedringbuf::ShardedRingBuf;
 pub use task_local_spawn::{
-    rt_spawn_buffer_task, rt_spawn_with_cft, spawn_assigner, spawn_bounded_dequeue_full_with_cft,
-    spawn_bounded_dequeue_with_cft, spawn_bounded_dequeuer, spawn_bounded_dequeuer_full,
-    spawn_bounded_enqueue_with_cft, spawn_bounded_enqueuer, spawn_buffer_task,
-    spawn_dequeue_full_with_cft, spawn_dequeue_with_cft, spawn_dequeuer, spawn_dequeuer_full,
-    spawn_enqueue_with_cft, spawn_enqueuer, spawn_unbounded_dequeue_full_with_cft,
-    spawn_unbounded_dequeue_with_cft, spawn_unbounded_dequeuer, spawn_unbounded_dequeuer_full,
-    spawn_unbounded_enqueue_with_cft, spawn_unbounded_enqueuer, spawn_with_cft, terminate_assigner,
+    cft_spawn_dequeuer, cft_spawn_dequeuer_bounded, cft_spawn_dequeuer_full,
+    cft_spawn_dequeuer_full_bounded, cft_spawn_dequeuer_full_unbounded,
+    cft_spawn_dequeuer_unbounded, cft_spawn_enqueuer, cft_spawn_enqueuer_with_iterator,
+    cft_spawn_enqueuer_with_stream, spawn_assigner, spawn_dequeuer, spawn_dequeuer_bounded,
+    spawn_dequeuer_full, spawn_dequeuer_full_bounded, spawn_dequeuer_full_unbounded,
+    spawn_dequeuer_unbounded, spawn_enqueuer, spawn_enqueuer_with_iterator,
+    spawn_enqueuer_with_stream, terminate_assigner,
 };
-pub use task_node::TaskRole;

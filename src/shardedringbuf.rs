@@ -25,7 +25,7 @@ enum Acquire {
 
 /// A sharded ring (circular) buffer struct that can only be used in an *async environment*.
 #[derive(Debug)]
-pub struct LFShardedRingBuf<T> {
+pub struct ShardedRingBuf<T> {
     /// Total capacity of the buffer
     capacity: AtomicUsize,
     /// Used to determine which shard a thread-task pair should work on
@@ -49,7 +49,7 @@ pub struct LFShardedRingBuf<T> {
     pub(crate) assigner_terminate: AtomicBool,
 }
 
-// An inner ring buffer to contain the items, enqueue and dequeue index for LFShardedRingBuf struct
+// An inner ring buffer to contain the items, enqueue and dequeue index for ShardedRingBuf struct
 #[derive(Debug, Default)]
 struct InnerRingBuffer<T> {
     /// Box containing the content of the buffer
@@ -95,8 +95,8 @@ impl<T> InnerRingBuffer<T> {
     }
 }
 
-impl<T> LFShardedRingBuf<T> {
-    /// Instantiates LFShardedRingBuf
+impl<T> ShardedRingBuf<T> {
+    /// Instantiates ShardedRingBuf
     ///
     /// Time Complexity: O(s) where s is the number of shards
     ///
@@ -142,15 +142,6 @@ impl<T> LFShardedRingBuf<T> {
             assigner_terminate: AtomicBool::new(false),
         }
     }
-
-    // /// Assigner task uses this to get the head of the linked list
-    // /// Enq/Deq task also uses when spawned for task registration
-    // /// This is private to the crate because a user should NOT
-    // /// have access to any of these TaskNodes
-    // #[inline(always)]
-    // pub(crate) fn get_head(&self) -> TaskNodePtr {
-    //     TaskNodePtr(self.head.load(Ordering::Acquire))
-    // }
 
     /// Assigner task uses this to get the head of the linked list in a
     /// relaxed manner
@@ -202,9 +193,6 @@ impl<T> LFShardedRingBuf<T> {
     ///
     /// Time Complexity: O(1)
     ///
-    /// Note: Time complexity of this function may change if dynamic
-    /// shard capacity is supported in the future
-    ///
     /// Space Complexity: O(1)
     #[inline]
     pub async fn async_get_shard_capacity(&self, shard_ind: usize) -> Option<usize> {
@@ -229,8 +217,6 @@ impl<T> LFShardedRingBuf<T> {
     ///
     /// Time Complexity: O(1)
     ///
-    /// Note: Time complexity of this function may change if dynamic
-    /// shard capacity is supported in the future
     ///
     /// Space Complexity: O(1)
     #[inline]
@@ -321,13 +307,9 @@ impl<T> LFShardedRingBuf<T> {
 
             if self.acquire_shard(current) {
                 /*
-                 * Note here we don't check if the shard is full or empty first
-                 * That's because these shard checks are done in an eventual memory
-                 * consistent state, which means for safety, we need to acquire the
-                 * shard first. Otherwise we may be acquiring a shard that was
-                 * incorrectly seen as non empty or non full (or vice versa).
-                 * and that could lead to addition/subtraction overflow on
-                 * enqueue_ind, dequeue_ind, and job_count in InnerRingBuffer<T>
+                 * We need to acquire the shard first to get a stable view of how many items
+                 * are on the shard. On the plus side, we can perform all operations within
+                 * this section in a Relaxed manner.
                  */
                 if match acquire {
                     Acquire::Enqueue => !self.is_shard_full(current),
@@ -340,12 +322,8 @@ impl<T> LFShardedRingBuf<T> {
                     break;
                 } else {
                     /*
-                     * Because a successful thread-task pair who can enqueue/dequeue
-                     * will eventually release the shard_lock using Release
-                     * memory ordering, all other threads who come here and
-                     * acquire the shard only to realize that the shard is full
-                     * as an enqueuer or empty as a dequeuer, can just drop this lock
-                     * immediately in a memory safe ordering manner.
+                     * If the shard is full/empty for enqueue/dequeue operation,
+                     * then release the lock in a relaxed manner
                      */
                     self.shard_locks[current].store(false, Ordering::Relaxed);
                 }
@@ -388,11 +366,8 @@ impl<T> LFShardedRingBuf<T> {
     #[inline(always)]
     fn enqueue_in_shard(&self, shard_ind: usize, item: T) {
         let inner = &self.inner_rb[shard_ind];
-        // Ordering Relaxed can be used safely because this thread-task pair is the
-        // only modifier of this index
-
         // we use fetch add here because we want to obtain the previous value
-        // to dequeue while also decrementing this index (separate load and store
+        // to dequeue while also incrementing this counter (separate load and store
         // incurs more cost)
         let enqueue_index = inner.enqueue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
         let item_cell = inner.items[enqueue_index].get();
@@ -410,9 +385,8 @@ impl<T> LFShardedRingBuf<T> {
     ///
     /// Space Complexity: O(1)
     async fn enqueue_item(&self, item: T) {
-        // If we have multiple shards and multiple threads, the more optimal route is to
-        // use shard locking to prevent false sharing while potentially having
-        // good cache locality access per thread
+        // If we have multiple shards and multiple threads, we need to use
+        // shard locking
         if self.get_num_of_shards() != 1 || Handle::current().metrics().num_workers() != 1 {
             // acquire shard
             let current = self.try_acquire_shard(Acquire::Enqueue).await;
@@ -465,7 +439,7 @@ impl<T> LFShardedRingBuf<T> {
     /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
     ///
     /// Space complexity: O(1)
-    pub async fn enqueue(&self, item: T) {
+    pub(crate) async fn enqueue(&self, item: T) {
         if self.poisoned.load(Ordering::Relaxed) {
             println!("Can't enqueue anymore. Ring buffer is poisoned.");
             return;
@@ -477,17 +451,16 @@ impl<T> LFShardedRingBuf<T> {
     #[inline(always)]
     fn dequeue_in_shard(&self, shard_ind: usize) -> T {
         let inner = &self.inner_rb[shard_ind];
-        // Ordering Relaxed can be used safely because this thread-task pair is the
-        // only modifier of this index
-
         // we use fetch add here because we want to obtain the previous value
-        // to dequeue while also decrementing this index (separate load and store
+        // to dequeue while also incrementing this counter (separate load and store
         // incurs more cost)
         let dequeue_index = inner.dequeue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
 
+        let item_cell = inner.items[dequeue_index].get();
+
         // SAFETY: Only one thread will perform this operation
         // And it's guaranteed that an item will exist here
-        let item = unsafe { (*inner.items[dequeue_index].get()).assume_init_read() };
+        let item = unsafe { (*item_cell).assume_init_read() };
 
         // SAFETY: We just copied the item by value, so we no longer need to hold
         // this item in memory
@@ -504,12 +477,9 @@ impl<T> LFShardedRingBuf<T> {
     /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
     ///
     /// Space Complexity: O(1)
-    pub async fn dequeue(&self) -> Option<T> {
+    pub(crate) async fn dequeue(&self) -> Option<T> {
         // If we have multiple shards or multiple worker threads,
-        // the more optimal route is to use shard locking to prevent
-        // false sharing while potentially having good cache locality access
-        // Moreover this prevents dequeuer tasks from stepping on each other
-        // for a job in a single threaded case
+        // we need to use locking
         if self.get_num_of_shards() != 1 || Handle::current().metrics().num_workers() != 1 {
             let current = self.try_acquire_shard(Acquire::Dequeue).await;
             if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
@@ -549,8 +519,6 @@ impl<T> LFShardedRingBuf<T> {
                     self.job_space_notif.notify_one();
                     return Some(item);
                 }
-                // self.job_space_notif.notify_one();
-                // self.job_available_notif.notified().await;
                 yield_now().await;
             }
         }
@@ -563,12 +531,9 @@ impl<T> LFShardedRingBuf<T> {
     /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
     ///
     /// Space Complexity: O(1)
-    pub async fn dequeue_full(&self) -> Option<Vec<T>> {
+    pub(crate) async fn dequeue_full(&self) -> Option<Vec<T>> {
         // If we have multiple shards or multiple worker threads,
-        // the more optimal route is to use shard locking to prevent
-        // false sharing while potentially having good cache locality access
-        // Moreover this prevents dequeuer tasks from stepping on each other
-        // for a job in a single threaded case
+        // we need to use locking
         if self.get_num_of_shards() != 1 || Handle::current().metrics().num_workers() != 1 {
             let current = self.try_acquire_shard(Acquire::Dequeue).await;
             if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
@@ -600,9 +565,6 @@ impl<T> LFShardedRingBuf<T> {
                 // we use this loop here because it's possible for multiple looping dequeuers to exist
                 // inside 1 shard which means we need to keep re-acquiring the enq_counter and deq_counter
                 // to make sure there's any jobs left inside for it to be truly lock free slot-based
-                // however doing this multiple looping dequeuers on a single shard is really slow
-                // and causes cache invalidation because threads can write to the same cache line
-                // due  to assume_init_read()
                 loop {
                     if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
                         return None;
@@ -633,11 +595,6 @@ impl<T> LFShardedRingBuf<T> {
                     self.job_space_notif.notify_waiters();
                     return Some(vec_items);
                 }
-
-                // else if !self.is_full() {
-                //     self.job_space_notif.notify_waiters();
-                // }
-                // yield_now().await;
             }
         }
     }
@@ -1616,15 +1573,15 @@ impl<T> LFShardedRingBuf<T> {
     }
 }
 
-unsafe impl<T> Sync for LFShardedRingBuf<T> {}
-unsafe impl<T> Send for LFShardedRingBuf<T> {}
+unsafe impl<T> Sync for ShardedRingBuf<T> {}
+unsafe impl<T> Send for ShardedRingBuf<T> {}
 
 unsafe impl<T> Sync for InnerRingBuffer<T> {}
 unsafe impl<T> Send for InnerRingBuffer<T> {}
 
-// Destructor trait for LFShardedRingBuf just in case it gets dropped and its
+// Destructor trait for ShardedRingBuf just in case it gets dropped and its
 // list of AtomicPtrs are not fully cleaned up yet.
-impl<T> Drop for LFShardedRingBuf<T> {
+impl<T> Drop for ShardedRingBuf<T> {
     fn drop(&mut self) {
         let mut current = self.head.load(Ordering::Relaxed);
         // SAFETY: Once I see null, I know all the nodes have been freed
@@ -1639,7 +1596,7 @@ impl<T> Drop for LFShardedRingBuf<T> {
 }
 
 // Destructor trait created for InnerRingBuffer<T> to clean up
-// memory allocated onto MaybeUninit<T> when LFShardedRingBuf<T>
+// memory allocated onto MaybeUninit<T> when ShardedRingBuf<T>
 // goes out of scope
 impl<T> Drop for InnerRingBuffer<T> {
     fn drop(&mut self) {

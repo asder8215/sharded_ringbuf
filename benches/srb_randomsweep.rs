@@ -1,7 +1,6 @@
-
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use lf_shardedringbuf::{LFShardedRingBuf, spawn_bounded_enqueuer, spawn_unbounded_dequeuer};
-use lf_shardedringbuf::{ShardPolicy, spawn_unbounded_dequeuer_full};
+use lf_shardedringbuf::{ShardPolicy, spawn_dequeuer_full_unbounded};
+use lf_shardedringbuf::{ShardedRingBuf, spawn_dequeuer_unbounded, spawn_enqueuer_with_iterator};
 use std::sync::Arc;
 
 fn test_add(x: usize) -> usize {
@@ -12,36 +11,25 @@ fn test_add(x: usize) -> usize {
     y
 }
 
-async fn lfsrb_sweep(capacity: usize, shards: usize, task_count: usize) {
+async fn lfsrb_random_and_sweep(capacity: usize, shards: usize, task_count: usize) {
     let max_items: usize = capacity;
 
-    let rb = Arc::new(LFShardedRingBuf::new(max_items, shards));
+    let rb = Arc::new(ShardedRingBuf::new(max_items, shards));
 
-    let mut deq_tasks = Vec::with_capacity(1);
+    let mut deq_tasks = Vec::with_capacity(shards);
     let mut enq_tasks = Vec::with_capacity(task_count);
 
-    // spawn enq tasks with shift by policy
+    // spawn enq tasks with random and sweep policy
     for _ in 0..task_count {
-        let handle = spawn_bounded_enqueuer(
-            rb.clone(),
-            ShardPolicy::Sweep {
-                initial_index: None,
-            },
-            (0..=1000000).collect::<Vec<_>>().into_iter(),
-        );
+        let handle =
+            spawn_enqueuer_with_iterator(rb.clone(), ShardPolicy::RandomAndSweep, 0..=1000000);
         enq_tasks.push(handle);
     }
 
-    for _ in 0..1 {
-        let handle = spawn_unbounded_dequeuer(
-            rb.clone(),
-            ShardPolicy::Sweep {
-                initial_index: None,
-            },
-            |x| {
-                test_add(x);
-            },
-        );
+    for _ in 0..shards {
+        let handle = spawn_dequeuer_unbounded(rb.clone(), ShardPolicy::RandomAndSweep, |x| {
+            test_add(x);
+        });
         deq_tasks.push(handle);
     }
 
@@ -58,36 +46,25 @@ async fn lfsrb_sweep(capacity: usize, shards: usize, task_count: usize) {
     }
 }
 
-async fn lfsrb_sweep_deq_full(capacity: usize, shards: usize, task_count: usize) {
+async fn lfsrb_random_and_sweep_deq_full(capacity: usize, shards: usize, task_count: usize) {
     let max_items: usize = capacity;
 
-    let rb = Arc::new(LFShardedRingBuf::new(max_items, shards));
+    let rb = Arc::new(ShardedRingBuf::new(max_items, shards));
 
-    let mut deq_tasks = Vec::with_capacity(1);
+    let mut deq_tasks = Vec::with_capacity(shards);
     let mut enq_tasks = Vec::with_capacity(task_count);
 
-    // spawn enq tasks with shift by policy
+    // spawn enq tasks with random and sweep policy
     for _ in 0..task_count {
-        let handle = spawn_bounded_enqueuer(
-            rb.clone(),
-            ShardPolicy::Sweep {
-                initial_index: None,
-            },
-            (0..=1000000).collect::<Vec<_>>().into_iter(),
-        );
+        let handle =
+            spawn_enqueuer_with_iterator(rb.clone(), ShardPolicy::RandomAndSweep, 0..=1000000);
         enq_tasks.push(handle);
     }
 
-    for _ in 0..1 {
-        let handle = spawn_unbounded_dequeuer_full(
-            rb.clone(),
-            ShardPolicy::Sweep {
-                initial_index: None,
-            },
-            |x| {
-                test_add(x);
-            },
-        );
+    for _ in 0..shards {
+        let handle = spawn_dequeuer_full_unbounded(rb.clone(), ShardPolicy::RandomAndSweep, |x| {
+            test_add(x);
+        });
         deq_tasks.push(handle);
     }
 
@@ -104,7 +81,7 @@ async fn lfsrb_sweep_deq_full(capacity: usize, shards: usize, task_count: usize)
     }
 }
 
-fn benchmark_shiftby(c: &mut Criterion) {
+fn benchmark_random_and_sweep(c: &mut Criterion) {
     const MAX_THREADS: [usize; 2] = [4, 8];
     const CAPACITY: usize = 1024;
     const SHARDS: [usize; 5] = [1, 2, 4, 8, 16];
@@ -119,8 +96,8 @@ fn benchmark_shiftby(c: &mut Criterion) {
         for shard_num in SHARDS {
             for task_count in TASKS {
                 let func_name = format!(
-                    "Sweep: {} threads, {} shards, {} enq tasks enqueuing 1 million items, 1 looping deq task",
-                    thread_num, shard_num, task_count
+                    "RandomAndSweep: {} threads, {} shards, {} enq tasks enqueuing 1 million items, {} looping deq task",
+                    thread_num, shard_num, task_count, shard_num
                 );
 
                 c.bench_with_input(
@@ -130,7 +107,7 @@ fn benchmark_shiftby(c: &mut Criterion) {
                         // Insert a call to `to_async` to convert the bencher to async mode.
                         // The timing loops are the same as with the normal bencher.
                         b.to_async(&runtime).iter(async || {
-                            lfsrb_sweep(cap, shard_num, task_count).await;
+                            lfsrb_random_and_sweep(cap, shard_num, task_count).await;
                         });
                     },
                 );
@@ -148,8 +125,8 @@ fn benchmark_shiftby(c: &mut Criterion) {
         for shard_num in SHARDS {
             for task_count in TASKS {
                 let func_name = format!(
-                    "Sweep: {} threads, {} shards, {} enq tasks enqueuing 1 million items, 1 looping deq full task",
-                    thread_num, shard_num, task_count
+                    "RandomAndSweep: {} threads, {} shards, {} enq tasks enqueuing 1 million items, {} looping deq full task",
+                    thread_num, shard_num, task_count, shard_num
                 );
 
                 c.bench_with_input(
@@ -159,7 +136,7 @@ fn benchmark_shiftby(c: &mut Criterion) {
                         // Insert a call to `to_async` to convert the bencher to async mode.
                         // The timing loops are the same as with the normal bencher.
                         b.to_async(&runtime).iter(async || {
-                            lfsrb_sweep_deq_full(cap, shard_num, task_count).await;
+                            lfsrb_random_and_sweep_deq_full(cap, shard_num, task_count).await;
                         });
                     },
                 );
@@ -168,5 +145,5 @@ fn benchmark_shiftby(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, benchmark_shiftby);
+criterion_group!(benches, benchmark_random_and_sweep);
 criterion_main!(benches);

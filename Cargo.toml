@@ -19,20 +19,54 @@ documentation = "https://docs.rs/lf-shardedringbuf/latest/lf_shardedringbuf/"
 crossbeam-utils = "^0.8.21"
 fastrand = "^2.3.0"
 futures-util = "0.3.31"
-tokio = {version = "^1.45.1", features = ["rt"] }
+tokio = {version = "^1.45.1", features = ["rt", "sync"] }
 
 [dev-dependencies]
 criterion = {version = "^0.6.0", features =["async_tokio"] }
 tokio = {version = "^1.45.1", features = ["sync", "macros", "rt-multi-thread"] }
 kanal = "^0.1.1"
 async-channel = "2.5.0"
+crossbeam = "0.8"
+flume = {version="0.11", features= ["async"] }
 
 [[bench]]
-name = "rb_benchmarks"
+name = "srb_shiftby"
 harness = false
 
 [[bench]]
-name = "lfsrb_shiftby"
+name = "srb_sweep"
+harness = false
+
+[[bench]]
+name = "srb_randomsweep"
+harness = false
+
+[[bench]]
+name = "srb_cft"
+harness = false
+
+[[bench]]
+name = "srb_pin"
+harness = false
+
+[[bench]]
+name = "flume"
+harness = false
+
+[[bench]]
+name = "tokio"
+harness = false
+
+[[bench]]
+name = "crossbeam"
+harness = false
+
+[[bench]]
+name = "crossfire"
+harness = false
+
+[[bench]]
+name = "kanal_async"
 harness = false
 
 [profile.dev]

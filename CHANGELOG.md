@@ -1,9 +1,16 @@
-# Change Log for lf-shardedringbuf:
+# Change for shardedringbuf:
 
-## In v4.1.0:
-* A new policy has been made called `CFT` (or Completely Fair Tasks). See `src/task_local_spawn.rs` for more details. Note that the shard policies might be refactored in the future (alongside all the other policies) to be as part of one of `LFShardedRingBuf<T>` functions.
+## In v0.4.0:
+* Moved `lf-shardedringbuf` crate to `shardedringbuf` crate because the version changes
+should have sat at v0.4.0 instead of having the major version number be incremented multiple times. Also, the name for the crate is a misnomer since it technically uses locks and the key feature of this buffer are the shards. 
+* A new policy has been made called `CFT` (or Completely Fair Tasks). See `src/task_local_spawn.rs` for more details.
+* Spawn functions have been refactored to specifically call on enqueue and dequeue functions
+of `ShardedRingBuf<T>` (as a result, the async enqueue and dequeue functions for the buffer is private)
 * Updated doc comments on spawn function and Shard Policies and various other places.
-* No new benchmarking details have been updated as of now due.
+* No new benchmarking details have been updated as of now due (though benchmarking code
+is being modularized currently).
+
+# Change Log for lf-shardedringbuf:
 
 ## In v3.1.0:
 * Metadata in `LFShardedRingBuf<T>` is once again refactored such that everything uses atomic primitives (i.e. `Box<[UnsafeCell<MaybeUninit<T>>]>` -> `Box<[AtomicPtr<MaybeUninit<T>>]>`). It implement `Send` and `Sync` by default now!
