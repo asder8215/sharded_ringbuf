@@ -1,33 +1,72 @@
 [package]
-name = "lf-shardedringbuf"
-version = "3.1.0"
+name = "sharded_ringbuf"
+version = "0.1.0"
 edition = "2024"
 rust-version="1.87.0"
 description = """
-An async, lock-free, sharded, cache-aware SPSC/MPSC/MPMC ring buffer in Rust.
+A Tokio async, sharded SPSC/MPSC/MPMC ring buffer in Rust.
 """
 authors= ["Mahdi Ali-Raihan mma2268@columbia.edu"]
 license = "MIT"
 keywords = ["sharding", "async", "ring-buffer", "mpmc", "spsc"]
-categories = ["concurrency"]
+categories = ["concurrency", "async"]
 readme = "README.md"
-repository = "https://github.com/asder8215/lf-shardedringbuf"
-homepage = "https://github.com/asder8215/lf-shardedringbuf"
-documentation = "https://docs.rs/lf-shardedringbuf/latest/lf_shardedringbuf/"
+repository = "https://github.com/asder8215/sharded_ringbuf"
+homepage = "https://github.com/asder8215/sharded_ringbuf"
+documentation = "https://docs.rs/sharded_ringbuf/latest/sharded_ringbuf/"
 
 [dependencies]
 crossbeam-utils = "^0.8.21"
 fastrand = "^2.3.0"
 futures-util = "0.3.31"
-tokio = {version = "^1.45.1", features = ["rt"] }
+tokio = {version = "^1.45.1", features = ["rt", "sync"] }
 
 [dev-dependencies]
 criterion = {version = "^0.6.0", features =["async_tokio"] }
 tokio = {version = "^1.45.1", features = ["sync", "macros", "rt-multi-thread"] }
 kanal = "^0.1.1"
+async-channel = "2.5.0"
+crossbeam = "0.8"
+flume = {version="0.11", features= ["async"] }
 
 [[bench]]
-name = "rb_benchmarks"
+name = "srb_shiftby"
+harness = false
+
+[[bench]]
+name = "srb_sweep"
+harness = false
+
+[[bench]]
+name = "srb_randomsweep"
+harness = false
+
+[[bench]]
+name = "srb_cft"
+harness = false
+
+[[bench]]
+name = "srb_pin"
+harness = false
+
+[[bench]]
+name = "flume"
+harness = false
+
+[[bench]]
+name = "tokio"
+harness = false
+
+[[bench]]
+name = "crossbeam"
+harness = false
+
+[[bench]]
+name = "crossfire"
+harness = false
+
+[[bench]]
+name = "kanal_async"
 harness = false
 
 [profile.dev]

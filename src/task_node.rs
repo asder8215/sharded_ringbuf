@@ -5,10 +5,9 @@ use std::{
 };
 
 /// This is to denote whether the task you are spawning
-/// is an enqueuer or a dequeur. You use this in `spawn_with_cft()`
-/// or `rt_spawn_with_cft`
+/// is an enqueuer or a dequeur.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum TaskRole {
+pub(crate) enum TaskRole {
     Enqueue,
     Dequeue,
 }
@@ -52,7 +51,6 @@ impl TaskNode {
     pub(crate) fn new(role: TaskRole) -> Self {
         Self {
             role,
-            // is_done: AtomicBool::new(false),
             is_done: CachePadded::new(AtomicBool::new(false)),
             is_paired: AtomicBool::new(false),
             is_assigned: AtomicBool::new(false),

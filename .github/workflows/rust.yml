@@ -11,7 +11,7 @@ env:
 
 jobs:
   build_and_test:
-    name: lf-shardedringbuf
+    name: sharded_ringbuf
     runs-on: ubuntu-latest
 
     steps:
@@ -40,6 +40,3 @@ jobs:
 
       - name: Install nightly toolchain
         run: rustup toolchain install nightly
-
-      - name: Run benchmark
-        run: cargo +nightly bench | tee output.txt

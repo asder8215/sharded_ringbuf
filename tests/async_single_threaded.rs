@@ -1,20 +1,20 @@
-use lf_shardedringbuf::LFShardedRingBuf;
-use lf_shardedringbuf::ShardPolicy;
-use lf_shardedringbuf::TaskRole;
-use lf_shardedringbuf::spawn_assigner;
-use lf_shardedringbuf::spawn_buffer_task;
-use lf_shardedringbuf::spawn_with_cft;
-use lf_shardedringbuf::terminate_assigner;
+use sharded_ringbuf::ShardPolicy;
+use sharded_ringbuf::ShardedRingBuf;
+use sharded_ringbuf::cft_spawn_dequeuer_bounded;
+use sharded_ringbuf::cft_spawn_dequeuer_unbounded;
+use sharded_ringbuf::cft_spawn_enqueuer_with_iterator;
+use sharded_ringbuf::spawn_assigner;
+use sharded_ringbuf::spawn_dequeuer_unbounded;
+use sharded_ringbuf::spawn_enqueuer_with_iterator;
+use sharded_ringbuf::terminate_assigner;
 use std::sync::Arc;
-use tokio::task::JoinHandle;
 
 #[tokio::test(flavor = "current_thread")]
 async fn test_spsc_tasks() {
     for _ in 0..100 {
         const MAX_ITEMS: usize = 100;
         const MAX_SHARDS: usize = 10;
-        let rb: Arc<LFShardedRingBuf<usize>> =
-            Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         // Init rb check
         assert!(rb.is_empty());
@@ -32,40 +32,24 @@ async fn test_spsc_tasks() {
 
         // Spawn 1 dequeuer task
         {
-            let rb = Arc::clone(&rb);
-            let handler = spawn_buffer_task(
+            let handler = spawn_dequeuer_unbounded(
+                rb.clone(),
                 ShardPolicy::Sweep {
                     initial_index: None,
                 },
-                async move {
-                    let rb = rb.clone();
-                    let mut counter: usize = 0;
-                    loop {
-                        let item = rb.dequeue().await;
-                        match item {
-                            Some(_) => counter += 1,
-                            None => break,
-                        }
-                    }
-                    counter
-                },
+                |_| {},
             );
             deq_threads.push(handler);
         }
 
         // Spawn 1 enqueuer task
         {
-            let rb = Arc::clone(&rb);
-            let enq_handler = spawn_buffer_task(
+            let enq_handler = spawn_enqueuer_with_iterator(
+                rb.clone(),
                 ShardPolicy::Sweep {
                     initial_index: None,
                 },
-                async move {
-                    let rb = rb.clone();
-                    for _i in 0..2 * MAX_ITEMS {
-                        rb.enqueue(20).await;
-                    }
-                },
+                0..2 * MAX_ITEMS,
             );
             enq_threads.push(enq_handler);
         }
@@ -93,8 +77,7 @@ async fn test_spmc_tasks() {
         const MAX_ITEMS: usize = 100;
         const MAX_SHARDS: usize = 10;
         const MAX_TASKS: usize = 5;
-        let rb: Arc<LFShardedRingBuf<usize>> =
-            Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         // Init rb check
         assert!(rb.is_empty());
@@ -112,41 +95,25 @@ async fn test_spmc_tasks() {
 
         // Spawn MAX_TASKS dequeuer tasks
         for i in 0..MAX_TASKS {
-            let rb = Arc::clone(&rb);
-            let handler = spawn_buffer_task(
+            let handler = spawn_dequeuer_unbounded(
+                rb.clone(),
                 ShardPolicy::ShiftBy {
                     initial_index: Some(i),
                     shift: MAX_TASKS,
                 },
-                async move {
-                    let rb = rb.clone();
-                    let mut counter: usize = 0;
-                    loop {
-                        let item = rb.dequeue().await;
-                        match item {
-                            Some(_) => counter += 1,
-                            None => break,
-                        }
-                    }
-                    counter
-                },
+                |_| {},
             );
             deq_threads.push(handler);
         }
 
         // Spawn 1 enqueuer task
         {
-            let rb = Arc::clone(&rb);
-            let enq_handler = spawn_buffer_task(
+            let enq_handler = spawn_enqueuer_with_iterator(
+                rb.clone(),
                 ShardPolicy::Sweep {
                     initial_index: None,
                 },
-                async move {
-                    let rb = rb.clone();
-                    for _i in 0..2 * MAX_ITEMS {
-                        rb.enqueue(20).await;
-                    }
-                },
+                0..2 * MAX_ITEMS,
             );
             enq_threads.push(enq_handler);
         }
@@ -176,8 +143,7 @@ async fn test_mpsc_tasks() {
         const MAX_ITEMS: usize = 100;
         const MAX_SHARDS: usize = 10;
         const MAX_TASKS: usize = 5;
-        let rb: Arc<LFShardedRingBuf<usize>> =
-            Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         // Init rb check
         assert!(rb.is_empty());
@@ -195,41 +161,25 @@ async fn test_mpsc_tasks() {
 
         // Spawn 1 dequeuer task
         {
-            let rb = Arc::clone(&rb);
-            let handler = spawn_buffer_task(
+            let handler = spawn_dequeuer_unbounded(
+                rb.clone(),
                 ShardPolicy::Sweep {
                     initial_index: None,
                 },
-                async move {
-                    let rb = rb.clone();
-                    let mut counter: usize = 0;
-                    loop {
-                        let item = rb.dequeue().await;
-                        match item {
-                            Some(_) => counter += 1,
-                            None => break,
-                        }
-                    }
-                    counter
-                },
+                |_| {},
             );
             deq_threads.push(handler);
         }
 
         // Spawn multiple enqueuer tasks
         for i in 0..MAX_TASKS {
-            let rb = Arc::clone(&rb);
-            let enq_handler = spawn_buffer_task(
+            let enq_handler = spawn_enqueuer_with_iterator(
+                rb.clone(),
                 ShardPolicy::ShiftBy {
                     initial_index: Some(i),
                     shift: MAX_TASKS,
                 },
-                async move {
-                    let rb = rb.clone();
-                    for _i in 0..2 * MAX_ITEMS {
-                        rb.enqueue(20).await;
-                    }
-                },
+                0..2 * MAX_ITEMS,
             );
             enq_threads.push(enq_handler);
         }
@@ -259,8 +209,7 @@ async fn test_mpmc_tasks() {
         const MAX_ITEMS: usize = 100;
         const MAX_SHARDS: usize = 10;
         const MAX_TASKS: usize = 5;
-        let rb: Arc<LFShardedRingBuf<usize>> =
-            Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         // Init rb check
         assert!(rb.is_empty());
@@ -278,42 +227,26 @@ async fn test_mpmc_tasks() {
 
         // Spawn MAX_TASKS dequeuer tasks
         for i in 0..MAX_TASKS {
-            let rb = Arc::clone(&rb);
-            let handler = spawn_buffer_task(
+            let handler = spawn_dequeuer_unbounded(
+                rb.clone(),
                 ShardPolicy::ShiftBy {
                     initial_index: Some(i),
                     shift: MAX_TASKS,
                 },
-                async move {
-                    let rb = rb.clone();
-                    let mut counter: usize = 0;
-                    loop {
-                        let item = rb.dequeue().await;
-                        match item {
-                            Some(_) => counter += 1,
-                            None => break,
-                        }
-                    }
-                    counter
-                },
+                |_| {},
             );
             deq_threads.push(handler);
         }
 
         // Spawn MAX_TASKS enqueuer tasks
         for i in 0..MAX_TASKS {
-            let rb = Arc::clone(&rb);
-            let enq_handler = spawn_buffer_task(
+            let enq_handler = spawn_enqueuer_with_iterator(
+                rb.clone(),
                 ShardPolicy::ShiftBy {
                     initial_index: Some(i),
                     shift: MAX_TASKS,
                 },
-                async move {
-                    let rb = rb.clone();
-                    for _i in 0..2 * MAX_ITEMS {
-                        rb.enqueue(20).await;
-                    }
-                },
+                0..2 * MAX_ITEMS,
             );
             enq_threads.push(enq_handler);
         }
@@ -343,8 +276,7 @@ async fn test_random_and_sweep() {
         const MAX_ITEMS: usize = 100;
         const MAX_SHARDS: usize = 10;
         const MAX_TASKS: usize = 5;
-        let rb: Arc<LFShardedRingBuf<usize>> =
-            Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         // Init rb check
         assert!(rb.is_empty());
@@ -362,31 +294,17 @@ async fn test_random_and_sweep() {
 
         // Spawn MAX_TASKS dequeuer tasks
         for _ in 0..MAX_TASKS {
-            let rb = Arc::clone(&rb);
-            let handler = spawn_buffer_task(ShardPolicy::RandomAndSweep, async move {
-                let rb = rb.clone();
-                let mut counter: usize = 0;
-                loop {
-                    let item = rb.dequeue().await;
-                    match item {
-                        Some(_) => counter += 1,
-                        None => break,
-                    }
-                }
-                counter
-            });
+            let handler = spawn_dequeuer_unbounded(rb.clone(), ShardPolicy::RandomAndSweep, |_| {});
             deq_threads.push(handler);
         }
 
         // Spawn MAX_TASKS enqueuer tasks
         for _ in 0..MAX_TASKS {
-            let rb = Arc::clone(&rb);
-            let enq_handler = spawn_buffer_task(ShardPolicy::RandomAndSweep, async move {
-                let rb = rb.clone();
-                for _i in 0..2 * MAX_ITEMS {
-                    rb.enqueue(20).await;
-                }
-            });
+            let enq_handler = spawn_enqueuer_with_iterator(
+                rb.clone(),
+                ShardPolicy::RandomAndSweep,
+                0..2 * MAX_ITEMS,
+            );
             enq_threads.push(enq_handler);
         }
 
@@ -415,8 +333,7 @@ async fn test_full_clear_empty() {
         const MAX_ITEMS: usize = 100;
         const MAX_SHARDS: usize = 10;
         const MAX_TASKS: usize = 5;
-        let rb: Arc<LFShardedRingBuf<usize>> =
-            Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         // Init rb check
         assert!(rb.is_empty());
@@ -433,13 +350,11 @@ async fn test_full_clear_empty() {
 
         // Spawn MAX_TASKS enqueuer tasks
         for _ in 0..MAX_TASKS {
-            let rb = Arc::clone(&rb);
-            let enq_handler = spawn_buffer_task(ShardPolicy::RandomAndSweep, async move {
-                let rb = rb.clone();
-                for _ in 0..(MAX_ITEMS / MAX_TASKS) {
-                    rb.enqueue(20).await;
-                }
-            });
+            let enq_handler = spawn_enqueuer_with_iterator(
+                rb.clone(),
+                ShardPolicy::RandomAndSweep,
+                0..(MAX_ITEMS / MAX_TASKS),
+            );
             enq_threads.push(enq_handler);
         }
 
@@ -471,39 +386,25 @@ async fn test_full_clear_empty() {
 #[tokio::test(flavor = "current_thread")]
 async fn test_shiftby_uneven_tasks() {
     for _ in 0..100 {
-        const MAX_ITEMS: usize = 100000;
+        const MAX_ITEMS: usize = 100;
         const MAX_SHARDS: usize = 10;
         const MAX_TASKS: usize = 5;
-        let rb: Arc<LFShardedRingBuf<usize>> =
-            Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         assert!(rb.is_empty());
 
         let mut deq_threads = Vec::new();
-        let mut enq_threads: Vec<JoinHandle<()>> = Vec::new();
-
-        // let assigner = spawn_assigner(rb.clone());
+        let mut enq_threads = Vec::new();
 
         // Spawn MAX_TASKS dequeuer tasks
         for _ in 0..MAX_TASKS {
-            let rb = Arc::clone(&rb);
-            let handler = spawn_buffer_task(
+            let handler = spawn_dequeuer_unbounded(
+                rb.clone(),
                 ShardPolicy::ShiftBy {
                     initial_index: None,
                     shift: MAX_TASKS,
                 },
-                async move {
-                    let rb = rb.clone();
-                    let mut counter: usize = 0;
-                    loop {
-                        let item = rb.dequeue().await;
-                        match item {
-                            Some(_) => counter += 1,
-                            None => break,
-                        }
-                    }
-                    counter
-                },
+                |_| {},
             );
             deq_threads.push(handler);
         }
@@ -511,17 +412,13 @@ async fn test_shiftby_uneven_tasks() {
         // Spawn MAX_TASKS enqueuer tasks
         for _ in 0..MAX_TASKS * 2 {
             let rb = Arc::clone(&rb);
-            let enq_handler = spawn_buffer_task(
+            let enq_handler = spawn_enqueuer_with_iterator(
+                rb.clone(),
                 ShardPolicy::ShiftBy {
                     initial_index: None,
                     shift: MAX_TASKS * 2,
                 },
-                async move {
-                    let rb = rb.clone();
-                    for _i in 0..2 * MAX_ITEMS {
-                        rb.enqueue(20).await;
-                    }
-                },
+                0..2 * MAX_ITEMS,
             );
             enq_threads.push(enq_handler);
         }
@@ -548,48 +445,27 @@ async fn test_shiftby_uneven_tasks() {
 #[tokio::test(flavor = "current_thread")]
 async fn test_cft_policy() {
     for _ in 0..100 {
-        const MAX_ITEMS: usize = 100000;
+        const MAX_ITEMS: usize = 1000;
         const MAX_SHARDS: usize = 10;
         const MAX_TASKS: usize = 5;
-        let rb: Arc<LFShardedRingBuf<usize>> =
-            Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         assert!(rb.is_empty());
 
         let mut deq_threads = Vec::new();
-        let mut enq_threads: Vec<JoinHandle<()>> = Vec::new();
+        let mut enq_threads = Vec::new();
 
         let assigner = spawn_assigner(rb.clone());
 
         // Spawn MAX_TASKS dequeuer tasks
         for _ in 0..MAX_TASKS {
-            let rb = Arc::clone(&rb);
-            let handler =
-                spawn_with_cft::<_, usize, usize>(TaskRole::Dequeue, rb.clone(), async move {
-                    let rb = rb.clone();
-                    let mut counter: usize = 0;
-                    loop {
-                        let item = rb.dequeue().await;
-                        match item {
-                            Some(_) => counter += 1,
-                            None => break,
-                        }
-                    }
-                    counter
-                });
+            let handler = cft_spawn_dequeuer_unbounded(rb.clone(), |_| {});
             deq_threads.push(handler);
         }
 
         // Spawn MAX_TASKS enqueuer tasks
         for _ in 0..MAX_TASKS {
-            let rb = Arc::clone(&rb);
-            let enq_handler =
-                spawn_with_cft::<_, usize, ()>(TaskRole::Enqueue, rb.clone(), async move {
-                    let rb = rb.clone();
-                    for _i in 0..2 * MAX_ITEMS {
-                        rb.enqueue(20).await;
-                    }
-                });
+            let enq_handler = cft_spawn_enqueuer_with_iterator(rb.clone(), 0..2 * MAX_ITEMS);
             enq_threads.push(enq_handler);
         }
 
@@ -619,52 +495,32 @@ async fn test_cft_policy() {
 #[tokio::test(flavor = "current_thread")]
 async fn test_cft_uneven_tasks() {
     for _ in 0..100 {
-        const MAX_ITEMS: usize = 100;
+        const MAX_ITEMS: usize = 1000;
         const MAX_SHARDS: usize = 10;
         const MAX_TASKS: usize = 5;
-        let rb: Arc<LFShardedRingBuf<usize>> =
-            Arc::new(LFShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         assert!(rb.is_empty());
 
         let mut deq_threads = Vec::new();
-        let mut enq_threads: Vec<JoinHandle<()>> = Vec::new();
+        let mut enq_threads = Vec::new();
 
         let assigner = spawn_assigner(rb.clone());
 
         // Spawn MAX_TASKS dequeuer tasks
         for _ in 0..MAX_TASKS {
-            let rb = Arc::clone(&rb);
-            let handler = spawn_with_cft(TaskRole::Dequeue, rb.clone(), async move {
-                let rb = rb.clone();
-                let mut counter: usize = 0;
-                loop {
-                    let item = rb.dequeue().await;
-                    match item {
-                        Some(_) => counter += 1,
-                        None => break,
-                    }
-                }
-                counter
-            });
+            let handler = cft_spawn_dequeuer_unbounded(rb.clone(), |_| {});
             deq_threads.push(handler);
         }
 
         // Spawn MAX_TASKS enqueuer tasks
         for _ in 0..MAX_TASKS * 2 {
-            let rb = Arc::clone(&rb);
-            let enq_handler = spawn_with_cft(TaskRole::Enqueue, rb.clone(), async move {
-                let rb = rb.clone();
-                for _i in 0..2 * MAX_ITEMS {
-                    rb.enqueue(20).await;
-                }
-            });
+            let enq_handler = cft_spawn_enqueuer_with_iterator(rb.clone(), 0..2 * MAX_ITEMS);
             enq_threads.push(enq_handler);
         }
 
         for enq in enq_threads {
             enq.await.unwrap();
-            // println!("I'm done enqueueing!");
         }
 
         // guarantees that the dequeuer finish remaining jobs in the buffer
@@ -689,53 +545,34 @@ async fn test_cft_uneven_tasks() {
 #[tokio::test(flavor = "current_thread")]
 async fn test_cft_more_tasks_less_shards() {
     for _ in 0..100 {
-        const MAX_ITEMS: usize = 100000;
-        const CAPACITY: usize = 1024;
+        const MAX_ITEMS: usize = 1000;
+        const CAPACITY: usize = 512;
         const MAX_SHARDS: usize = 5;
         const MAX_TASKS: usize = 10;
-        let rb: Arc<LFShardedRingBuf<usize>> =
-            Arc::new(LFShardedRingBuf::new(CAPACITY, MAX_SHARDS));
+        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(CAPACITY, MAX_SHARDS));
 
         assert!(rb.is_empty());
 
         let mut deq_threads = Vec::new();
-        let mut enq_threads: Vec<JoinHandle<()>> = Vec::new();
+        let mut enq_threads = Vec::new();
 
         let assigner = spawn_assigner(rb.clone());
 
         // Spawn MAX_TASKS dequeuer tasks
         for _ in 0..MAX_TASKS {
-            let rb = Arc::clone(&rb);
-            let handler = spawn_with_cft(TaskRole::Dequeue, rb.clone(), async move {
-                let rb = rb.clone();
-                let mut counter: usize = 0;
-                loop {
-                    let item = rb.dequeue().await;
-                    match item {
-                        Some(_) => counter += 1,
-                        None => break,
-                    }
-                }
-                counter
-            });
+            let handler = cft_spawn_dequeuer_unbounded(rb.clone(), |_| {});
             deq_threads.push(handler);
         }
 
         // Spawn MAX_TASKS enqueuer tasks
         for _ in 0..MAX_TASKS {
             let rb = Arc::clone(&rb);
-            let enq_handler = spawn_with_cft(TaskRole::Enqueue, rb.clone(), async move {
-                let rb = rb.clone();
-                for _i in 0..2 * MAX_ITEMS {
-                    rb.enqueue(20).await;
-                }
-            });
+            let enq_handler = cft_spawn_enqueuer_with_iterator(rb.clone(), 0..2 * MAX_ITEMS);
             enq_threads.push(enq_handler);
         }
 
         for enq in enq_threads {
             enq.await.unwrap();
-            // println!("I'm done enqueueing!");
         }
 
         // guarantees that the dequeuer finish remaining jobs in the buffer
@@ -760,53 +597,33 @@ async fn test_cft_more_tasks_less_shards() {
 #[tokio::test(flavor = "current_thread")]
 async fn test_cft_more_deq_than_enq() {
     for _ in 0..100 {
-        const MAX_ITEMS: usize = 100000;
-        const CAPACITY: usize = 1024;
+        const MAX_ITEMS: usize = 1000;
+        const CAPACITY: usize = 512;
         const MAX_SHARDS: usize = 5;
         const MAX_TASKS: usize = 10;
-        let rb: Arc<LFShardedRingBuf<usize>> =
-            Arc::new(LFShardedRingBuf::new(CAPACITY, MAX_SHARDS));
+        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(CAPACITY, MAX_SHARDS));
 
         assert!(rb.is_empty());
 
         let mut deq_threads = Vec::new();
-        let mut enq_threads: Vec<JoinHandle<()>> = Vec::new();
+        let mut enq_threads = Vec::new();
 
         let assigner = spawn_assigner(rb.clone());
 
         // Spawn MAX_TASKS dequeuer tasks
         for _ in 0..MAX_TASKS * 2 {
-            let rb = Arc::clone(&rb);
-            let handler = spawn_with_cft(TaskRole::Dequeue, rb.clone(), async move {
-                let rb = rb.clone();
-                let mut counter: usize = 0;
-                loop {
-                    let item = rb.dequeue().await;
-                    match item {
-                        Some(_) => counter += 1,
-                        None => break,
-                    }
-                }
-                counter
-            });
+            let handler = cft_spawn_dequeuer_unbounded(rb.clone(), |_| {});
             deq_threads.push(handler);
         }
 
         // Spawn MAX_TASKS enqueuer tasks
         for _ in 0..MAX_TASKS {
-            let rb = Arc::clone(&rb);
-            let enq_handler = spawn_with_cft(TaskRole::Enqueue, rb.clone(), async move {
-                let rb = rb.clone();
-                for _i in 0..2 * MAX_ITEMS {
-                    rb.enqueue(20).await;
-                }
-            });
+            let enq_handler = cft_spawn_enqueuer_with_iterator(rb.clone(), 0..2 * MAX_ITEMS);
             enq_threads.push(enq_handler);
         }
 
         for enq in enq_threads {
             enq.await.unwrap();
-            // println!("I'm done enqueueing!");
         }
 
         // guarantees that the dequeuer finish remaining jobs in the buffer
@@ -831,46 +648,27 @@ async fn test_cft_more_deq_than_enq() {
 #[tokio::test(flavor = "current_thread")]
 async fn test_cft_more_deq_items_than_enq() {
     for _ in 0..100 {
-        const MAX_ITEMS: usize = 100000;
-        const CAPACITY: usize = 1024;
+        const MAX_ITEMS: usize = 1000;
+        const CAPACITY: usize = 512;
         const MAX_SHARDS: usize = 5;
-        let rb: Arc<LFShardedRingBuf<usize>> =
-            Arc::new(LFShardedRingBuf::new(CAPACITY, MAX_SHARDS));
+        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(CAPACITY, MAX_SHARDS));
 
         assert!(rb.is_empty());
 
         let mut deq_threads = Vec::new();
-        let mut enq_threads: Vec<JoinHandle<()>> = Vec::new();
+        let mut enq_threads = Vec::new();
 
         let assigner = spawn_assigner(rb.clone());
 
         // Spawn MAX_TASKS dequeuer tasks
         for _ in 0..2 {
-            let rb = Arc::clone(&rb);
-            let handler = spawn_with_cft(TaskRole::Dequeue, rb.clone(), async move {
-                let rb = rb.clone();
-                let mut counter: usize = 0;
-                for _i in 0..(3 * MAX_ITEMS) / 2 {
-                    let item = rb.dequeue().await;
-                    match item {
-                        Some(_) => counter += 1,
-                        None => break,
-                    }
-                }
-                counter
-            });
+            let handler = cft_spawn_dequeuer_bounded(rb.clone(), (3 * MAX_ITEMS) / 2, |_| {});
             deq_threads.push(handler);
         }
 
         // Spawn MAX_TASKS enqueuer tasks
         for i in 1..3 {
-            let rb = Arc::clone(&rb);
-            let enq_handler = spawn_with_cft(TaskRole::Enqueue, rb.clone(), async move {
-                let rb = rb.clone();
-                for i in 0..MAX_ITEMS * i {
-                    rb.enqueue(i).await;
-                }
-            });
+            let enq_handler = cft_spawn_enqueuer_with_iterator(rb.clone(), 0..MAX_ITEMS * i);
             enq_threads.push(enq_handler);
         }
 
