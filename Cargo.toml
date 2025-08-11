@@ -9,7 +9,7 @@ A Tokio async, sharded SPSC/MPSC/MPMC ring buffer in Rust.
 authors= ["Mahdi Ali-Raihan mma2268@columbia.edu"]
 license = "MIT"
 keywords = ["sharding", "async", "ring-buffer", "mpmc", "spsc"]
-categories = ["concurrency", "async"]
+categories = ["concurrency"]
 readme = "README.md"
 repository = "https://github.com/asder8215/sharded_ringbuf"
 homepage = "https://github.com/asder8215/sharded_ringbuf"
