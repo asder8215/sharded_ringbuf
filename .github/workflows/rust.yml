@@ -11,7 +11,7 @@ env:
 
 jobs:
   build_and_test:
-    name: lf-shardedringbuf
+    name: sharded_ringbuf
     runs-on: ubuntu-latest
 
     steps:

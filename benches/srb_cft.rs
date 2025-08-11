@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use lf_shardedringbuf::{
+use sharded_ringbuf::{
     ShardedRingBuf, cft_spawn_dequeuer_full_unbounded, cft_spawn_dequeuer_unbounded,
     cft_spawn_enqueuer_with_iterator, spawn_assigner, terminate_assigner,
 };

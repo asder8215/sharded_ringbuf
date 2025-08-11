@@ -408,21 +408,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lf-shardedringbuf"
-version = "3.1.0"
-dependencies = [
- "async-channel",
- "criterion",
- "crossbeam",
- "crossbeam-utils",
- "fastrand",
- "flume",
- "futures-util",
- "kanal",
- "tokio",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.174"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -674,6 +659,21 @@ dependencies = [
  "memchr",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "sharded_ringbuf"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "criterion",
+ "crossbeam",
+ "crossbeam-utils",
+ "fastrand",
+ "flume",
+ "futures-util",
+ "kanal",
+ "tokio",
 ]
 
 [[package]]

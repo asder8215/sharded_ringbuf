@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use lf_shardedringbuf::{ShardPolicy, spawn_dequeuer_full_unbounded};
-use lf_shardedringbuf::{ShardedRingBuf, spawn_dequeuer_unbounded, spawn_enqueuer_with_iterator};
+use sharded_ringbuf::{ShardPolicy, spawn_dequeuer_full_unbounded};
+use sharded_ringbuf::{ShardedRingBuf, spawn_dequeuer_unbounded, spawn_enqueuer_with_iterator};
 use std::sync::Arc;
 
 fn test_add(x: usize) -> usize {

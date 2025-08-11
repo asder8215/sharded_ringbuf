@@ -1,12 +1,12 @@
-use lf_shardedringbuf::ShardPolicy;
-use lf_shardedringbuf::ShardedRingBuf;
-use lf_shardedringbuf::cft_spawn_dequeuer_bounded;
-use lf_shardedringbuf::cft_spawn_dequeuer_unbounded;
-use lf_shardedringbuf::cft_spawn_enqueuer_with_iterator;
-use lf_shardedringbuf::spawn_assigner;
-use lf_shardedringbuf::spawn_dequeuer_unbounded;
-use lf_shardedringbuf::spawn_enqueuer_with_iterator;
-use lf_shardedringbuf::terminate_assigner;
+use sharded_ringbuf::ShardPolicy;
+use sharded_ringbuf::ShardedRingBuf;
+use sharded_ringbuf::cft_spawn_dequeuer_bounded;
+use sharded_ringbuf::cft_spawn_dequeuer_unbounded;
+use sharded_ringbuf::cft_spawn_enqueuer_with_iterator;
+use sharded_ringbuf::spawn_assigner;
+use sharded_ringbuf::spawn_dequeuer_unbounded;
+use sharded_ringbuf::spawn_enqueuer_with_iterator;
+use sharded_ringbuf::terminate_assigner;
 use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
