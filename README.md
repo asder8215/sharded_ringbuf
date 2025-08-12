@@ -21,7 +21,7 @@ If enqueuer and dequeuer tasks are done with a limited number of enqueue/dequeue
 
     let rb = Arc::new(ShardedRingBuf::new(max_items, shards));
 
-    let mut deq_tasks = Vec::with_capacity(shards);
+    let mut deq_tasks = Vec::with_capacity(task_count);
     let mut enq_tasks = Vec::with_capacity(task_count);
 
     // spawn enq tasks with shift by policy
@@ -44,7 +44,7 @@ If enqueuer and dequeuer tasks are done with a limited number of enqueue/dequeue
             max_items,
             ShardPolicy::ShiftBy {
                 initial_index: Some(i),
-                shift: shards,
+                shift: task_count,
             },
             |_| {
             // can put a function here optionally
