@@ -21,6 +21,7 @@ use tokio::{runtime::Handle, sync::Notify, task::yield_now};
 enum Acquire {
     Enqueue,
     Dequeue,
+    EnqueueFull
 }
 
 /// A sharded ring (circular) buffer struct that can only be used in an *async environment*.
@@ -271,17 +272,17 @@ impl<T> ShardedRingBuf<T> {
                 // to this specific task's TaskNodePtr by the assigner task
                 let task_node = unsafe { &*get_task_node().0 };
                 match acquire {
-                    Acquire::Enqueue => {
-                        while !task_node.is_assigned.load(Ordering::Relaxed) {
-                            yield_now().await;
-                        }
-                        task_node.shard_ind.load(Ordering::Relaxed)
-                    }
                     Acquire::Dequeue => {
                         while !task_node.is_assigned.load(Ordering::Relaxed) {
                             if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
                                 return 0;
                             }
+                            yield_now().await;
+                        }
+                        task_node.shard_ind.load(Ordering::Relaxed)
+                    },
+                    _ => {
+                        while !task_node.is_assigned.load(Ordering::Relaxed) {
                             yield_now().await;
                         }
                         task_node.shard_ind.load(Ordering::Relaxed)
@@ -317,6 +318,7 @@ impl<T> ShardedRingBuf<T> {
                  * this section in a Relaxed manner.
                  */
                 if match acquire {
+                    Acquire::EnqueueFull => self.is_shard_empty(current),
                     Acquire::Enqueue => !self.is_shard_full(current),
                     Acquire::Dequeue => !self.is_shard_empty(current),
                 } {
@@ -604,6 +606,69 @@ impl<T> ShardedRingBuf<T> {
         }
     }
 
+        /// Retrieves an item of type T from the RingBuffer if an item exists in the buffer.
+    /// If the ring buffer is set with a poisoned flag or received a poison pill,
+    /// this method will return None.
+    ///
+    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
+    ///
+    /// Space Complexity: O(1)
+    pub(crate) async fn enqueue_full(&self, items: Vec<T>) {
+        // If we have multiple shards or multiple worker threads,
+        // we need to use locking
+        if self.get_num_of_shards() != 1 || Handle::current().metrics().num_workers() != 1 {
+            let current = self.try_acquire_shard(Acquire::EnqueueFull).await;
+            if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
+                return;
+            }
+            // let mut vec_items = Vec::new();
+
+            // while !self.is_shard_empty(current) {
+            //     let item = self.dequeue_in_shard(current);
+            //     vec_items.push(item);
+            // }
+
+            for item in items {
+                self.enqueue_in_shard(current, item);
+            }
+
+            self.release_shard(current);
+            // Some(vec_items)
+        }
+        // Otherwise, the user is likely going through a single dequeuer route
+        // (MPSC or SPSC), so we can just approach this in a lock free slot
+        // based manner, context switching if no job is available
+        // else {
+        //     // If poisoned, do not enqueue this item.
+        //     if self.poisoned.load(Ordering::Relaxed) {
+        //         println!("Can't enqueue anymore. Ring buffer is poisoned.");
+        //         return;
+        //     }
+        //     loop {
+        //         let inner = &self.inner_rb[0];
+        //         let enq_counter = inner.enqueue_index.get();
+        //         let deq_counter = inner.dequeue_index.get();
+        //         let jobs = enq_counter.wrapping_sub(deq_counter);
+
+        //         for item in items {
+        //             let enqueue_index = inner.enqueue_index.get() % inner.items.len();
+        //             inner.enqueue_index.set(inner.enqueue_index.get() + 1);
+        //             let item_cell = inner.items[enqueue_index].get();
+        //             unsafe {
+        //                 (*item_cell).write(item);
+        //             }
+        //             self.job_post_notif.notify_one();
+        //             return;
+        //         }
+
+        //         // we're using a notify for the enqueuer
+        //         // it minimizes the number times we context switch
+        //         self.job_post_notif.notify_waiters();
+        //         self.job_space_notif.notified().await;
+        //     }
+        // }
+    }
+
     /// Sets the poison flag of the ring buffer to true. This will prevent enqueuers
     /// from enqueuing anymore jobs if this method is called while enqueues are occuring.
     /// However you can use this if you want graceful exit of dequeuers tasks completing
@@ -887,6 +952,23 @@ impl<T> ShardedRingBuf<T> {
         let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == item_len
     }
+
+
+    /// Checks to see if a specific shard is full
+    ///
+    /// Time Complexity: O(1)
+    ///
+    /// Space Complexity: O(1)
+    // #[inline(always)]
+    // pub fn is_shard_full_for_full(&self, shard_ind: usize) -> bool {
+    //     let inner = &self.inner_rb[shard_ind];
+    //     let item_len = inner.items.len();
+    //     // use these values as monotonic counter than indices
+    //     let (enq_ind, deq_ind) = (inner.enqueue_index.get(), inner.dequeue_index.get());
+    //     let jobs = enq_ind.wrapping_sub(deq_ind);
+    //     jobs == item_len
+    // }
+
 
     /// Gets the enqueue index within a shard. Returns None if the shard
     /// index is invalid.

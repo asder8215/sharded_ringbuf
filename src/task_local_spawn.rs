@@ -500,6 +500,80 @@ where
 }
 
 /// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
+/// context for the purpose of dequeuing items from a shard fully `count` number of times from a `ShardedRingBuf<T>`.
+///
+/// On return, it returns a JoinHandle that, when completed, returns the number of successful
+/// dequeue full operations that occurred.
+pub fn spawn_enqueuer_full_with_iterator<T, I>(
+    buffer: Arc<ShardedRingBuf<T>>,
+    policy: ShardPolicy,
+    items: I,
+) -> JoinHandle<usize>
+where
+    I: IntoIterator<Item = T> + Send + 'static,
+    T: Send + 'static,
+    <I as IntoIterator>::IntoIter: Send,
+{
+    let enq_fut = async move {
+        let mut counter = 0;
+        // loop { 
+        let full_enq = buffer.get_shard_capacity(buffer.get_num_of_shards() - 1).unwrap();
+        let mut enq_vec = Vec::with_capacity(full_enq);
+        for item in items {
+            if counter != 0 && counter % full_enq == 0 {
+                buffer.enqueue_full(enq_vec).await;
+                enq_vec = Vec::with_capacity(full_enq);
+                enq_vec.push(item);
+                counter += 1;
+            } else {
+                enq_vec.push(item);
+                counter += 1;
+            }
+        }
+        
+        if enq_vec.len() != 0 {
+            buffer.enqueue_full(enq_vec).await;
+        }
+
+        counter
+    };
+    match policy {
+        ShardPolicy::Sweep { initial_index } => spawn(SHIFT.scope(
+            Cell::new(1),
+            SHARD_POLICY.scope(
+                Cell::new(ShardPolicyKind::Sweep),
+                SHARD_INDEX.scope(Cell::new(initial_index), enq_fut),
+            ),
+        )),
+        ShardPolicy::RandomAndSweep => spawn(SHIFT.scope(
+            Cell::new(1),
+            SHARD_POLICY.scope(
+                Cell::new(ShardPolicyKind::RandomAndSweep),
+                SHARD_INDEX.scope(Cell::new(None), enq_fut),
+            ),
+        )),
+        ShardPolicy::ShiftBy {
+            initial_index,
+            shift,
+        } => spawn(SHIFT.scope(
+            Cell::new(shift),
+            SHARD_POLICY.scope(
+                Cell::new(ShardPolicyKind::ShiftBy),
+                SHARD_INDEX.scope(Cell::new(initial_index), enq_fut),
+            ),
+        )),
+        ShardPolicy::Pin { initial_index } => spawn(SHIFT.scope(
+            Cell::new(0),
+            SHARD_POLICY.scope(
+                Cell::new(ShardPolicyKind::Pin),
+                SHARD_INDEX.scope(Cell::new(Some(initial_index)), enq_fut),
+            ),
+        )),
+    }
+}
+
+
+/// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
 /// context for the purpose of dequeuing items from a shard fully an unbounded number of times from a `ShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
