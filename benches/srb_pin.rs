@@ -108,9 +108,9 @@ async fn lfsrb_pin_deq_full(capacity: usize, shards: usize, task_count: usize) {
         enq_tasks.push(handle);
     }
 
-    for i in 0..task_count {
+    for i in 0..shards {
         let handle =
-            spawn_dequeuer_bounded(rb.clone(), ShardPolicy::Pin { initial_index: i }, 1,|x| {
+            spawn_dequeuer_bounded(rb.clone(), ShardPolicy::Pin { initial_index: i }, task_count / shards + 1,|x| {
                 test_add(x);
             });
         deq_tasks.push(handle);
@@ -126,7 +126,7 @@ async fn lfsrb_pin_deq_full(capacity: usize, shards: usize, task_count: usize) {
 
     // for i in 0..16 {
     //     let handle =
-    //         spawn_dequeuer_full_bounded(rb.clone(), ShardPolicy::Pin { initial_index: i }, 1 * 63,|x| {
+    //         spawn_dequeuer_full_bounded(rb.clone(), ShardPolicy::Pin { initial_index: i }, task_count / shards + 1,|x| {
     //             test_add(x);
     //         });
     //     deq_tasks.push(handle);
@@ -139,7 +139,7 @@ async fn lfsrb_pin_deq_full(capacity: usize, shards: usize, task_count: usize) {
 
     rb.poison();
 
-    for i in 0..task_count {
+    for i in 0..shards {
         rb.notify_pin_shard(i % rb.get_num_of_shards());
         // println!("I'm done");
     }
