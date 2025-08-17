@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 /// These are the Shard Acquistion Policies supported by LFShardedRingBuf
 /// All of these policies are meant to be stable, cancel-safe, and should not cause any
 /// memory issues with use in the LFShardedRingBuf. To see about the
@@ -22,7 +22,11 @@ pub enum ShardPolicy {
     },
     /// Pin: The task will perform one shot enqueue/dequeue operations at only the specified index
     /// provided. If the task could not enqueue/dequeue an item on a shard (due to another enqueuer/dequeuer
-    /// claiming the shard), it yields itself.
+    /// claiming the shard), it yields itself. 
+    /// 
+    /// ⚠️ Warning: This policy can ONLY interact with other Pin policy tasks due to the nature of how tasks
+    /// receive a notification to wake up. Do NOT use Pin enqueue/dequeues with Sweep/RandomAndSweep/ShiftBy 
+    /// tasks. 
     Pin { initial_index: usize },
 }
 

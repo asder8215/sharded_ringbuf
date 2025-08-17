@@ -18,9 +18,9 @@ async fn kanal_async(c: usize, task_count: usize) {
         let rx = r.clone();
         handles.push(task::spawn(async move {
             for _ in 0..task_count {
-                for _ in 0..5 {
+                for _ in 0..1 {
                     let x = rx.recv().await.unwrap();
-                    // test_add(x);
+                    test_add(x);
                 }
             }
         }));
@@ -29,7 +29,7 @@ async fn kanal_async(c: usize, task_count: usize) {
     for _ in 0..task_count {
         let tx = s.clone();
         handles.push(task::spawn(async move {
-            for i in 0..5 {
+            for i in 0..1 {
                 tx.send(i).await.unwrap();
             }
         }));
@@ -47,7 +47,7 @@ fn benchmark_kanal_async(c: &mut Criterion) {
     const MAX_THREADS: [usize; 1] = [8];
     const CAPACITY: usize = 1024;
     // const SHARDS: [usize; 1] = [8];
-    const TASKS: [usize; 1] = [1000000];
+    const TASKS: [usize; 1] = [100000];
     for thread_num in MAX_THREADS {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()

@@ -33,6 +33,18 @@ where
         let mut counter = 0;
         buffer.enqueue(item).await;
         counter += 1;
+
+        match policy {
+            ShardPolicy::Sweep { initial_index } => {},
+            ShardPolicy::RandomAndSweep => {},
+            ShardPolicy::ShiftBy { initial_index, shift } => todo!(),
+            ShardPolicy::Pin { initial_index } => {
+                // println!("I completed work as a Enqueuer and need to notify Deq");
+                buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
+                // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_waiters();
+            },
+        }
+
         counter
     };
 
@@ -92,6 +104,19 @@ where
             buffer.enqueue(item).await;
             counter += 1;
         }
+
+        match policy {
+            ShardPolicy::Sweep { initial_index } => {},
+            ShardPolicy::RandomAndSweep => {},
+            ShardPolicy::ShiftBy { initial_index, shift } => {},
+            ShardPolicy::Pin { initial_index } => {
+                // println!("I completed work as a Enqueuer and need to notify Deq");
+                buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
+                // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_waiters();
+
+            },
+        };
+
         counter
     };
     match policy {
@@ -209,6 +234,16 @@ where
             counter += 1;
         }
 
+        match policy {
+            ShardPolicy::Sweep { initial_index } => {},
+            ShardPolicy::RandomAndSweep => {},
+            ShardPolicy::ShiftBy { initial_index, shift } => todo!(),
+            ShardPolicy::Pin { initial_index } => {
+                // println!("I completed work as a Enqueuer and need to notify Deq");
+                buffer.job_space_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
+            },
+        }
+
         counter
     };
     match policy {
@@ -273,6 +308,17 @@ where
                 None => break,
             }
         }
+        // println!("done");
+        let _ = match policy {
+            ShardPolicy::Sweep { initial_index } => {},
+            ShardPolicy::RandomAndSweep => {},
+            ShardPolicy::ShiftBy { initial_index, shift } => {},
+            ShardPolicy::Pin { initial_index } => {
+                // println!("I completed work as a Enqueuer and need to notify Deq");
+                buffer.job_space_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
+            },
+        };
+        // println!("I'm here");
         counter
     };
     match policy {
@@ -336,6 +382,8 @@ where
                 None => break,
             }
         }
+        // println!("I'm done");
+        // buffer.deq_fin_taken.set(false);
         counter
     };
     match policy {
@@ -462,6 +510,8 @@ where
                 None => break,
             }
         }
+        // println!("I'm done");
+        // buffer.deq_fin_taken.set(false);
         counter
     };
     match policy {
@@ -533,6 +583,17 @@ where
         
         if enq_vec.len() != 0 {
             buffer.enqueue_full(enq_vec).await;
+        }
+
+        match policy {
+            ShardPolicy::Sweep { initial_index } => {},
+            ShardPolicy::RandomAndSweep => {},
+            ShardPolicy::ShiftBy { initial_index, shift } => todo!(),
+            ShardPolicy::Pin { initial_index } => {
+                // println!("I completed work as a Enqueuer and need to notify Deq");
+                buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
+                // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_waiters();
+            },
         }
 
         counter
