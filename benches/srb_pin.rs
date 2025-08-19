@@ -1,14 +1,30 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use sharded_ringbuf::{spawn_dequeuer_bounded, spawn_dequeuer_full_bounded, spawn_dequeuer_full_unbounded, spawn_enqueuer, spawn_enqueuer_full_with_iterator, ShardPolicy};
+use sharded_ringbuf::{spawn_dequeuer, spawn_dequeuer_bounded, spawn_dequeuer_full_bounded, spawn_dequeuer_full_unbounded, spawn_enqueuer, spawn_enqueuer_full_with_iterator, ShardPolicy};
 use sharded_ringbuf::{ShardedRingBuf, spawn_dequeuer_unbounded, spawn_enqueuer_with_iterator};
 use std::sync::Arc;
 
-fn test_add(x: usize) -> usize {
-    let mut y = x;
-    y = y.wrapping_mul(31);
-    y = y.rotate_left(7);
-    y = y.wrapping_add(1);
-    y
+// fn test_add(x: usize) -> usize {
+//     let mut y = x;
+//     y = y.wrapping_mul(31);
+//     y = y.rotate_left(7);
+//     y = y.wrapping_add(1);
+//     y
+// }
+
+#[derive(Default, Debug, Clone, Copy)]
+struct Message {
+    item_one: u128,
+    item_two: u128,
+    item_three: u128,
+    item_four: u128,
+    item_five: u128,
+    item_six: u128,
+    item_seven: u128,
+    item_eight: u128,
+    item_nine: u128,
+    item_ten: u128,
+    item_eleven: u128,
+    item_twelve: u128,
 }
 
 async fn lfsrb_pin(capacity: usize, shards: usize, task_count: usize) {
@@ -28,20 +44,21 @@ async fn lfsrb_pin(capacity: usize, shards: usize, task_count: usize) {
     //     );
     //     enq_tasks.push(handle);
     // }
-
     for i in 0..task_count {
+        let msg = Message::default();
         let handle = spawn_enqueuer(
             rb.clone(),
             ShardPolicy::Pin { initial_index: i },
-            i,
+            // i,
+            msg,
         );
         enq_tasks.push(handle);
     }
-
+ 
     for i in 0..shards {
         let handle =
             spawn_dequeuer_unbounded(rb.clone(), ShardPolicy::Pin { initial_index: i }, |x| {
-                test_add(x);
+                // test_add(x);
             });
         deq_tasks.push(handle);
     }
@@ -76,17 +93,17 @@ async fn lfsrb_pin_deq_full(capacity: usize, shards: usize, task_count: usize) {
     let mut enq_tasks = Vec::with_capacity(task_count);
 
     // spawn enq tasks with pin policy
-    // for i in 0..task_count {
-    //     let handle = spawn_enqueuer_full_with_iterator(
-    //     // let handle = spawn_enqueuer_with_iterator(
-    //         rb.clone(),
-    //         ShardPolicy::Pin { initial_index: i },
-    //         0..=15,
-    //         // 0..=250000*1000,
-    //         // 0..1
-    //     );
-    //     enq_tasks.push(handle);
-    // }
+    for i in 0..task_count {
+        // let handle = spawn_enqueuer_full_with_iterator(
+        let handle = spawn_enqueuer_with_iterator(
+            rb.clone(),
+            ShardPolicy::Pin { initial_index: i },
+            0..250000,
+            // 0..=250000*1000,
+            // 0..1
+        );
+        enq_tasks.push(handle);
+    }
 
     // for i in 0..shards {
     //     let handle =
@@ -96,38 +113,62 @@ async fn lfsrb_pin_deq_full(capacity: usize, shards: usize, task_count: usize) {
     //     deq_tasks.push(handle);
     // }
 
-    for i in 0..task_count {
-        let handle = spawn_enqueuer(
-        // let handle = spawn_enqueuer_with_iterator(
-            rb.clone(),
-            ShardPolicy::Pin { initial_index: i },
-            0,
-            // 0..=250000*1000,
-            // 0..1
-        );
-        enq_tasks.push(handle);
-    }
+    // for i in 0..task_count {
+    //     // let msg = Message::default();
+    //     // let mut msg_vec = Vec::new();
+    //     // for _ in 0..100 {
+    //     //     msg_vec.push(msg);
+    //     // }
+    //     // let handle = spawn_enqueuer(
+    //     let handle = spawn_enqueuer_with_iterator(
+    //         rb.clone(),
+    //         ShardPolicy::Pin { initial_index: i },
+    //         // msg,
+    //         0..250000,
+    //         // 0..1
+    //         // msg_vec
+    //     );
+    //     enq_tasks.push(handle);
+    // }
+
+    // for i in 0..task_count {
+    //     for _ in 0..10 {
+    //     let handle =
+    //         spawn_dequeuer(rb.clone(), ShardPolicy::Pin { initial_index: i },|x| {
+    //             // test_add(x);
+    //         });
+    //         deq_tasks.push(handle);
+    //     }
+    // }
+
+    // for i in 0..shards {
+    //     let handle =
+    //         spawn_dequeuer_bounded(rb.clone(), ShardPolicy::Pin { initial_index: i },100 * 100 /16 + 1,|x| {
+    //             // test_add(x);
+    //         });
+    //     deq_tasks.push(handle);
+    // }
+
+    // for i in 0..shards {
+    //     let handle =
+    //         spawn_dequeuer_unbounded(rb.clone(), ShardPolicy::Pin { initial_index: i },|x| {
+    //             // test_add(x);
+    //         });
+    //     deq_tasks.push(handle);
+    // }
 
     for i in 0..shards {
         let handle =
-            spawn_dequeuer_bounded(rb.clone(), ShardPolicy::Pin { initial_index: i }, task_count / shards + 1,|x| {
-                test_add(x);
+            spawn_dequeuer_full_unbounded(rb.clone(), ShardPolicy::Pin { initial_index: i }, |x| {
+                // test_add(x);
             });
         deq_tasks.push(handle);
     }
 
     // for i in 0..shards {
     //     let handle =
-    //         spawn_dequeuer_full_unbounded(rb.clone(), ShardPolicy::Pin { initial_index: i }, |x| {
-    //             test_add(x);
-    //         });
-    //     deq_tasks.push(handle);
-    // }
-
-    // for i in 0..16 {
-    //     let handle =
-    //         spawn_dequeuer_full_bounded(rb.clone(), ShardPolicy::Pin { initial_index: i }, task_count / shards + 1,|x| {
-    //             test_add(x);
+    //         spawn_dequeuer_full_bounded(rb.clone(), ShardPolicy::Pin { initial_index: i }, 100*100/16 + 1,|x| {
+    //             // test_add(x);
     //         });
     //     deq_tasks.push(handle);
     // }
@@ -138,15 +179,21 @@ async fn lfsrb_pin_deq_full(capacity: usize, shards: usize, task_count: usize) {
     }
 
     rb.poison();
+    // println!("I'm here");
 
     for i in 0..shards {
         rb.notify_pin_shard(i % rb.get_num_of_shards());
         // println!("I'm done");
     }
 
+    // for i in 0..shards {
+    //     println!("How many permits are in dequeue shard {}: {:?}", i, rb.job_post_shard_notifs[i].available_permits());
+    //     println!("How many permits are in enqueue shard {}: {:?}", i, rb.job_space_shard_notifs[i].available_permits());
+    // }
     // Wait for dequeuers
     for deq in deq_tasks {
         deq.await.unwrap();
+        // println!("Done!");
     }
 }
 
@@ -159,7 +206,7 @@ fn benchmark_pin(c: &mut Criterion) {
     const MAX_THREADS: [usize; 1] = [16];
     const CAPACITY: usize = 1024;
     const SHARDS: [usize; 1] = [16];
-    const TASKS: [usize; 1] = [100];
+    const TASKS: [usize; 1] = [100000];
     // for thread_num in MAX_THREADS {
     //     let runtime = tokio::runtime::Builder::new_multi_thread()
     //         .enable_all()

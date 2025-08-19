@@ -40,8 +40,8 @@ where
             ShardPolicy::ShiftBy { initial_index, shift } => todo!(),
             ShardPolicy::Pin { initial_index } => {
                 // println!("I completed work as a Enqueuer and need to notify Deq");
-                buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
-                // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_waiters();
+                // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
+                // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].add_permits(1);
             },
         }
 
@@ -111,8 +111,8 @@ where
             ShardPolicy::ShiftBy { initial_index, shift } => {},
             ShardPolicy::Pin { initial_index } => {
                 // println!("I completed work as a Enqueuer and need to notify Deq");
-                buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
-                // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_waiters();
+                // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
+                // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].add_permits(1);
 
             },
         };
@@ -240,7 +240,8 @@ where
             ShardPolicy::ShiftBy { initial_index, shift } => todo!(),
             ShardPolicy::Pin { initial_index } => {
                 // println!("I completed work as a Enqueuer and need to notify Deq");
-                buffer.job_space_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
+                // buffer.job_space_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
+                // buffer.job_space_shard_notifs[initial_index % buffer.get_num_of_shards()].add_permits(1);
             },
         }
 
@@ -315,7 +316,8 @@ where
             ShardPolicy::ShiftBy { initial_index, shift } => {},
             ShardPolicy::Pin { initial_index } => {
                 // println!("I completed work as a Enqueuer and need to notify Deq");
-                buffer.job_space_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
+                // buffer.job_space_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
+                // buffer.job_space_shard_notifs[initial_index % buffer.get_num_of_shards()].add_permits(1);
             },
         };
         // println!("I'm here");
@@ -591,8 +593,8 @@ where
             ShardPolicy::ShiftBy { initial_index, shift } => todo!(),
             ShardPolicy::Pin { initial_index } => {
                 // println!("I completed work as a Enqueuer and need to notify Deq");
-                buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
-                // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_waiters();
+                // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
+                // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].add_permits(1);
             },
         }
 
