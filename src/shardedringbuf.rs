@@ -384,107 +384,68 @@ impl<T> ShardedRingBuf<T> {
             loop {
                 // if poisoned and empty, get out of this loop
                 if self.poisoned.load(Ordering::Relaxed) {
-                    if matches!(get_shard_policy(), ShardPolicyKind::Pin) && self.is_shard_empty(get_shard_ind().expect("This shard index should be guaranteed here") % shard_count) {
-                        break;
-                    }
-                    else if self.is_empty() {
+                    if self.is_empty() {
                         break;
                     }
                 }
+                // if self.poisoned.load(Ordering::Relaxed) {
+                //     if matches!(get_shard_policy(), ShardPolicyKind::Pin) && self.is_shard_empty(get_shard_ind().expect("This shard index should be guaranteed here") % shard_count) {
+                //         break;
+                //     }
+                //     else if self.is_empty() {
+                //         break;
+                //     }
+                // }
 
-                if matches!(get_shard_policy(), ShardPolicyKind::Pin) {
+                // if matches!(get_shard_policy(), ShardPolicyKind::Pin) {
                     // yield_now().await;
-                    // if !pin_notify {
-                        // if matches!(acquire, Acquire::Dequeue) {
-                        //     let sem = self.job_post_shard_notifs[current].acquire().await;
-                        //     match sem {
-                        //         Ok(val) => {
-                        //             val.forget();
+                    // match acquire {
+                    //     Acquire::Enqueue => {
+                    //         let sem = self.job_space_shard_notifs[current].acquire().await;
+                    //         match sem {
+                    //             Ok(val) => {
+                    //                 val.forget();
+                    //             },
+                    //             Err(_) => {
+                    //                 continue;
+                    //             },
+                    //         }
+                    //     },
+                    //     Acquire::EnqueueFull { batch } => {
+                    //         let sem = self.job_space_shard_notifs[current].acquire_many(batch).await;
+                    //         match sem {
+                    //             Ok(val) => {
+                    //                 val.forget();
+                    //             },
+                    //             Err(_) => {
+                    //                 continue;
+                    //             },
+                    //         }
+                    //     },
+                    //     Acquire::Dequeue => {
+                    //         let sem = self.job_post_shard_notifs[current].acquire().await;
+                    //         match sem {
+                    //             Ok(val) => {
+                    //                 val.forget();
 
-                        //         },
-                        //         Err(_) => {
-                        //             continue;
-                        //         },
-                        //     }
-                        // } else if matches!(acquire, Acquire::DequeueFull) {
-                        //     let sem = self.job_post_shard_notifs[current].acquire_many(self.inner_rb[current].items.len() as u32).await;
-                        //     match sem {
-                        //         Ok(val) => {
-                        //             val.forget();
-                        //         },
-                        //         Err(_) => {
-                        //             continue;
-                        //         },
-                        //     }
-                        // } else if matches!(acquire, Acquire::EnqueueFull){
-                        //     let sem = self.job_post_shard_notifs[current].acquire_many(self.inner_rb[current].items.len() as u32).await;
-                        //     match sem {
-                        //         Ok(val) => {
-                        //             val.forget();
-                        //         },
-                        //         Err(_) => {
-                        //             continue;
-                        //         },
-                        //     }
-                        // }
-                        // else {
-                        //     let sem = self.job_space_shard_notifs[current].acquire().await;
-                        //     match sem {
-                        //         Ok(val) => {
-                        //             val.forget();
-                        //         },
-                        //         Err(_) => {
-                        //             continue;
-                        //         },
-                        //     }
-                        // }
-                        match acquire {
-                            Acquire::Enqueue => {
-                                let sem = self.job_space_shard_notifs[current].acquire().await;
-                                match sem {
-                                    Ok(val) => {
-                                        val.forget();
-                                    },
-                                    Err(_) => {
-                                        continue;
-                                    },
-                                }
-                            },
-                            Acquire::EnqueueFull { batch } => {
-                                let sem = self.job_space_shard_notifs[current].acquire_many(batch).await;
-                                match sem {
-                                    Ok(val) => {
-                                        val.forget();
-                                    },
-                                    Err(_) => {
-                                        continue;
-                                    },
-                                }
-                            },
-                            Acquire::Dequeue => {
-                                let sem = self.job_post_shard_notifs[current].acquire().await;
-                                match sem {
-                                    Ok(val) => {
-                                        val.forget();
-
-                                    },
-                                    Err(_) => {
-                                        continue;
-                                    },
-                                }
-                            },
-                            Acquire::DequeueFull { batch } => {
-                                let sem = self.job_post_shard_notifs[current].acquire_many(batch).await;
-                                match sem {
-                                    Ok(val) => {
-                                        val.forget();
-                                    },
-                                    Err(_) => {
-                                        continue;
-                                    },
-                                }
-                            },
-                        }
+                    //             },
+                    //             Err(_) => {
+                    //                 continue;
+                    //             },
+                    //         }
+                    //     },
+                    //     Acquire::DequeueFull { batch } => {
+                    //         let sem = self.job_post_shard_notifs[current].acquire_many(batch).await;
+                    //         match sem {
+                    //             Ok(val) => {
+                    //                 val.forget();
+                    //             },
+                    //             Err(_) => {
+                    //                 continue;
+                    //             },
+                    //         }
+                    //     },
+                    // }
                     // } 
                     // else {
                     //     let sem = self.job_notify_lock_shard[current].acquire().await;
@@ -497,7 +458,7 @@ impl<T> ShardedRingBuf<T> {
                     //         },
                     //     }
                     // }
-                }
+                // }
 
                 // if matches!(get_shard_policy(), ShardPolicyKind::Pin){
                 //     let _ = self.job_notify_lock_shard[current].acquire().await.expect("Should not be dropped and guaranteed");
@@ -510,48 +471,29 @@ impl<T> ShardedRingBuf<T> {
                 //         break;
                 //     // }
                 // } else {
-                    if self.acquire_shard(current) {
-                        /*
-                        * We need to acquire the shard first to get a stable view of how many items
-                        * are on the shard.
-                        */
-                        if match acquire {
-                            Acquire::EnqueueFull { batch: _ } => self.is_shard_empty(current),
-                            Acquire::Enqueue => !self.is_shard_full(current),
-                            _ => !self.is_shard_empty(current),
-                        } {
-                        // make sure that the shard index value is set to the
-                        // next index it should look at instead of starting
-                        // from its previous state
-                            set_shard_ind((current + get_shift()) % shard_count);
-                            break;
-                        } else {
-                        /*
-                        * If the shard is full/empty for enqueue/dequeue operation,
-                        * then release the lock in a relaxed manner
-                        */
-                            self.shard_locks[current].store(false, Ordering::Relaxed);
-                        // if matches!(acquire, Acquire::Dequeue) {
-                        //     if matches!(get_shard_policy(), ShardPolicyKind::Pin) {
-                        //         // self.job_space_shard_notifs[current].add_permits(1);
-                        //         // let _ = self.job_post_shard_notifs[current].acquire().await.expect("Guaranteed for a permit to exist");
-                        //         continue;
-                        //     }
-                        // } else {
-                        //     if matches!(get_shard_policy(), ShardPolicyKind::Pin) {
-                        //         // self.job_post_shard_notifs[current].add_permits(1);
-                        //         // let _ = self.job_space_shard_notifs[current].acquire().await.expect("Guaranteed for a permit to exist");
-                        //         continue;
-                        //     }
-                        // }
-                        // if matches!(get_shard_policy(), ShardPolicyKind::Pin) {
-                        //     pin_notify = true;
-                        //     continue;
-                        // }
-                        // any other policies go through a yield_now() approach.
-                        }
-                    } 
-                // }
+                if self.acquire_shard(current) {
+                    /*
+                    * We need to acquire the shard first to get a stable view of how many items
+                    * are on the shard.
+                    */
+                    if match acquire {
+                        Acquire::EnqueueFull { batch: _ } => self.is_shard_empty(current),
+                        Acquire::Enqueue => !self.is_shard_full(current),
+                        _ => !self.is_shard_empty(current),
+                    } {
+                    // make sure that the shard index value is set to the
+                    // next index it should look at instead of starting
+                    // from its previous state
+                        set_shard_ind((current + get_shift()) % shard_count);
+                        break;
+                    } else {
+                    /*
+                    * If the shard is full/empty for enqueue/dequeue operation,
+                    * then release the lock in a relaxed manner
+                    */
+                        self.shard_locks[current].store(false, Ordering::Relaxed);
+                    }
+                }
 
                 if matches!(get_shard_policy(), ShardPolicyKind::Pin) {
                     yield_now().await;
@@ -637,10 +579,10 @@ impl<T> ShardedRingBuf<T> {
 
             self.enqueue_in_shard(current, item);
             // self.release_shard(current);
-            if !matches!(get_shard_policy(), ShardPolicyKind::Pin) {
+            // if !matches!(get_shard_policy(), ShardPolicyKind::Pin) {
                 self.release_shard(current);
-            }
-            self.release_lock_permit(Acquire::Enqueue, current);
+            // }
+            // self.release_lock_permit(Acquire::Enqueue, current);
         // }
         // Otherwise, the user is likely going through a single dequeuer route
         // (MPSC or SPSC), so we can just approach this in a lock free slot
@@ -716,10 +658,10 @@ impl<T> ShardedRingBuf<T> {
             for item in items {
                 self.enqueue_in_shard(current, item);
             }
-            if !matches!(get_shard_policy(), ShardPolicyKind::Pin) {
+            // if !matches!(get_shard_policy(), ShardPolicyKind::Pin) {
                 self.release_shard(current);
-            }
-            self.release_lock_permit(enq_full, current);
+            // }
+            // self.release_lock_permit(enq_full, current);
             // Some(vec_items)
         // }
         // Otherwise, the user is likely going through a single dequeuer route
@@ -800,25 +742,25 @@ impl<T> ShardedRingBuf<T> {
         // we need to use locking
         // if self.get_num_of_shards() != 1 || Handle::current().metrics().num_workers() != 1 {
             let current = self.try_acquire_shard(Acquire::Dequeue).await;
-            // if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
-            //     return None;
-            // }
-
-            if self.poisoned.load(Ordering::Relaxed) {
-                if matches!(get_shard_policy(), ShardPolicyKind::Pin) && self.is_shard_empty(current) {
-                    return None;
-                }
-                else if self.is_empty() {
-                    return None;
-                }
+            if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
+                return None;
             }
+
+            // if self.poisoned.load(Ordering::Relaxed) {
+            //     if matches!(get_shard_policy(), ShardPolicyKind::Pin) && self.is_shard_empty(current) {
+            //         return None;
+            //     }
+            //     else if self.is_empty() {
+            //         return None;
+            //     }
+            // }
 
             let item = self.dequeue_in_shard(current);
             // self.release_shard(current);
-            if !matches!(get_shard_policy(), ShardPolicyKind::Pin) {
+            // if !matches!(get_shard_policy(), ShardPolicyKind::Pin) {
                 self.release_shard(current);
-            }
-            self.release_lock_permit(Acquire::Dequeue, current);
+            // }
+            // self.release_lock_permit(Acquire::Dequeue, current);
             Some(item)
         // }
         // Otherwise, the user is likely going through a single dequeuer route
@@ -869,18 +811,18 @@ impl<T> ShardedRingBuf<T> {
             let current = self.try_acquire_shard(Acquire::DequeueFull{
              batch: self.get_shard_capacity(self.get_num_of_shards() - 1).unwrap() as u32,   
             }).await;
-            // if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
-            //     return None;
-            // }
-
-            if self.poisoned.load(Ordering::Relaxed) {
-                if matches!(get_shard_policy(), ShardPolicyKind::Pin) && self.is_shard_empty(current) {
-                    return None;
-                }
-                else if self.is_empty() {
-                    return None;
-                }
+            if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
+                return None;
             }
+
+            // if self.poisoned.load(Ordering::Relaxed) {
+            //     if matches!(get_shard_policy(), ShardPolicyKind::Pin) && self.is_shard_empty(current) {
+            //         return None;
+            //     }
+            //     else if self.is_empty() {
+            //         return None;
+            //     }
+            // }
 
             let mut vec_items = Vec::new();
 
@@ -890,12 +832,12 @@ impl<T> ShardedRingBuf<T> {
             }
 
             // self.release_shard(current);
-            if !matches!(get_shard_policy(), ShardPolicyKind::Pin) {
+            // if !matches!(get_shard_policy(), ShardPolicyKind::Pin) {
                 self.release_shard(current);
-            }
-            self.release_lock_permit(Acquire::DequeueFull {
-                batch: vec_items.len() as u32
-            }, current);
+            // }
+            // self.release_lock_permit(Acquire::DequeueFull {
+            //     batch: vec_items.len() as u32
+            // }, current);
             Some(vec_items)
         // }
         // Otherwise, the user is likely going through a single dequeuer route

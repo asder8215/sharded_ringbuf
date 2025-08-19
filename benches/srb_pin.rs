@@ -181,10 +181,10 @@ async fn lfsrb_pin_deq_full(capacity: usize, shards: usize, task_count: usize) {
     rb.poison();
     // println!("I'm here");
 
-    for i in 0..shards {
-        rb.notify_pin_shard(i % rb.get_num_of_shards());
-        // println!("I'm done");
-    }
+    // for i in 0..shards {
+    //     rb.notify_pin_shard(i % rb.get_num_of_shards());
+    //     // println!("I'm done");
+    // }
 
     // for i in 0..shards {
     //     println!("How many permits are in dequeue shard {}: {:?}", i, rb.job_post_shard_notifs[i].available_permits());
@@ -206,7 +206,7 @@ fn benchmark_pin(c: &mut Criterion) {
     const MAX_THREADS: [usize; 1] = [16];
     const CAPACITY: usize = 1024;
     const SHARDS: [usize; 1] = [16];
-    const TASKS: [usize; 1] = [100000];
+    const TASKS: [usize; 1] = [1000];
     // for thread_num in MAX_THREADS {
     //     let runtime = tokio::runtime::Builder::new_multi_thread()
     //         .enable_all()
