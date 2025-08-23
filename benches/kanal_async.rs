@@ -1,3 +1,5 @@
+use std::{thread::sleep, time::Duration};
+
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use kanal::bounded_async;
 use tokio::task;
@@ -7,6 +9,7 @@ fn test_add(x: usize) -> usize {
     y = y.wrapping_mul(31);
     y = y.rotate_left(7);
     y = y.wrapping_add(1);
+    sleep(Duration::from_nanos(10));
     y
 }
 
@@ -18,7 +21,7 @@ async fn kanal_async(c: usize, task_count: usize) {
         let rx = r.clone();
         handles.push(task::spawn(async move {
             for _ in 0..task_count {
-                for _ in 0..1000000 {
+                for _ in 0..10 {
                     let x = rx.recv().await.unwrap();
                     test_add(x);
                 }
@@ -29,7 +32,7 @@ async fn kanal_async(c: usize, task_count: usize) {
     for _ in 0..task_count {
         let tx = s.clone();
         handles.push(task::spawn(async move {
-            for i in 0..1000000 {
+            for i in 0..1 {
                 tx.send(i).await.unwrap();
             }
         }));
@@ -41,9 +44,9 @@ async fn kanal_async(c: usize, task_count: usize) {
 }
 
 fn benchmark_kanal_async(c: &mut Criterion) {
-    const MAX_THREADS: [usize; 2] = [4, 8];
+    const MAX_THREADS: [usize; 1] = [16];
     const CAPACITY: usize = 1024;
-    const TASKS: [usize; 5] = [1, 2, 4, 8, 16];
+    const TASKS: [usize; 1] = [1000];
     for thread_num in MAX_THREADS {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
