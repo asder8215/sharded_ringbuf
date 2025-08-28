@@ -44,5 +44,5 @@ pub use task_local_spawn::{
     cft_spawn_enqueuer_with_stream, spawn_assigner, spawn_dequeuer, spawn_dequeuer_bounded,
     spawn_dequeuer_full, spawn_dequeuer_full_bounded, spawn_dequeuer_full_unbounded,
     spawn_dequeuer_unbounded, spawn_enqueuer, spawn_enqueuer_with_iterator,
-    spawn_enqueuer_with_stream, terminate_assigner,
+    spawn_enqueuer_with_stream, spawn_enqueuer_full_with_iterator, terminate_assigner,
 };

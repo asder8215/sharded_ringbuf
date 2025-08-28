@@ -74,3 +74,4 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
+debug = true

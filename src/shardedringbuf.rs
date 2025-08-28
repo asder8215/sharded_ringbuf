@@ -20,7 +20,9 @@ use tokio::{runtime::Handle, sync::Notify, task::yield_now};
 #[derive(Debug, PartialEq, Eq)]
 enum Acquire {
     Enqueue,
-    EnqueueFull,
+    EnqueueFull{
+        batch_count: usize
+    },
     Dequeue,
 }
 
@@ -55,7 +57,8 @@ pub struct ShardedRingBuf<T> {
     /// Signals whether the assigner is spawned already or not
     pub(crate) assigner_spawned: AtomicBool,
     /// Signals whether the assigner is terminated or not
-    pub(crate) assigner_terminate: AtomicBool,
+    // pub(crate) assigner_terminate: AtomicBool,
+    pub assigner_terminate: AtomicBool,
 }
 
 // An inner ring buffer to contain the items, enqueue and dequeue index for ShardedRingBuf struct
@@ -450,7 +453,19 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
                  * are on the shard.
                  */
                 if match acquire {
-                    Acquire::EnqueueFull => self.is_shard_empty(current),
+                    // for some reason checking if the shard is empty to enqueue full gives pretty stable
+                    // timing performances. the con of doing this way is that you're not using the full
+                    // benefit of enqueuing as much as you can into this shard buffer, but the pro is
+                    // that even in a partial filled state, you let the dequeuer immediately remove the
+                    // items here
+                    // Acquire::EnqueueFull {batch_count: _} => self.is_shard_empty(current),
+
+                    // checking if the shard is unable to contain a batch gives different range of timing
+                    // performance (sometimes better, sometimes worse). My assumption is that it 
+                    // has to do with cache hits and misses. that's probs the con here, but the pro
+                    // is that you're able to enqueue the most out of this shard buffer.
+                    Acquire::EnqueueFull {batch_count} => !self.is_shard_full_batch(current, batch_count),
+                    
                     Acquire::Enqueue => !self.is_shard_full(current),
                     Acquire::Dequeue => !self.is_shard_empty(current),
                 } {
@@ -618,7 +633,7 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
         // If we have multiple shards or multiple worker threads,
         // we need to use locking
         if self.get_num_of_shards() != 1 || Handle::current().metrics().num_workers() != 1 {
-            let current = self.try_acquire_shard(Acquire::EnqueueFull).await;
+            let current = self.try_acquire_shard(Acquire::EnqueueFull{batch_count: items.len()}).await;
             if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
                 return;
             }
@@ -1132,6 +1147,25 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
         );
         let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == item_len
+    }
+
+    /// Checks to see if a specific shard is unable to support batching a 
+    /// certain number of items 
+    ///
+    /// Time Complexity: O(1)
+    ///
+    /// Space Complexity: O(1)
+    #[inline(always)]
+    pub fn is_shard_full_batch(&self, shard_ind: usize, batch_count: usize) -> bool {
+        let inner = &self.inner_rb[shard_ind];
+        let item_len = inner.items.len();
+        // use these values as monotonic counter than indices
+        let (enq_ind, deq_ind) = (
+            inner.enqueue_index.load(Ordering::Relaxed),
+            inner.dequeue_index.load(Ordering::Relaxed),
+        );
+        let jobs = enq_ind.wrapping_sub(deq_ind);
+        item_len - jobs < batch_count
     }
 
     /// Checks to see if a specific shard is full in an async manner

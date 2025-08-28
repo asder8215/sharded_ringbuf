@@ -4,13 +4,78 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use kanal::bounded_async;
 use tokio::task;
 
-fn test_add(x: usize) -> usize {
+#[derive(Default, Debug, Clone, Copy)]
+struct Message {
+    item_one: u128,
+    item_two: u128,
+    item_three: u128,
+    item_four: u128,
+    // item_five: u128,
+    // item_six: u128,
+    // item_seven: u128,
+    // item_eight: u128,
+    // item_nine: u128,
+    // item_ten: u128,
+    // item_eleven: u128,
+    // item_twelve: u128,
+}
+
+static FUNC_TO_TEST: i32 = 2;
+fn test_func(x: u128) -> u128 {
+    match FUNC_TO_TEST {
+        0 => mult_add_ops(x),
+        1 => fib(x),
+        2 => prime_sieve(x),
+        3 => mul_stress(x as usize),
+        _ => {
+            todo!()
+        }
+    }
+}
+
+fn mult_add_ops(x: u128) -> u128 {
     let mut y = x;
     y = y.wrapping_mul(31);
     y = y.rotate_left(7);
     y = y.wrapping_add(1);
-    sleep(Duration::from_nanos(10));
     y
+}
+
+fn fib(x: u128) -> u128 {
+    let mut a = 0u128;
+    let mut b = 1u128;
+    for _ in 0..x {
+        let tmp = a + b;
+        a = b;
+        b = tmp;
+    }
+    a
+}
+
+fn prime_sieve(x: u128) -> u128 {
+    let mut is_prime = vec![true; x as usize];
+    let mut count = 0;
+
+    for i in 2..x {
+        if is_prime[i as usize] {
+            count += 1;
+            let mut j = i * 2;
+            while j < x {
+                is_prime[j as usize] = false;
+                j += i;
+            }
+        }
+    }
+
+    count
+}
+
+fn mul_stress(iter: usize) -> u128 {
+    let mut acc = 1u128;
+    for i in 1..=iter as u128 {
+        acc = acc.wrapping_mul(i ^ 0xdeadbeefdeadbeef);
+    }
+    acc
 }
 
 async fn kanal_async(c: usize, task_count: usize) {
@@ -21,9 +86,9 @@ async fn kanal_async(c: usize, task_count: usize) {
         let rx = r.clone();
         handles.push(task::spawn(async move {
             for _ in 0..task_count {
-                for _ in 0..10 {
-                    let x = rx.recv().await.unwrap();
-                    test_add(x);
+                for _ in 0..1 {
+                    let x: Message = rx.recv().await.unwrap();
+                    test_func(x.item_one as u128);
                 }
             }
         }));
@@ -31,9 +96,10 @@ async fn kanal_async(c: usize, task_count: usize) {
 
     for _ in 0..task_count {
         let tx = s.clone();
+        let msg = Message::default();
         handles.push(task::spawn(async move {
             for i in 0..1 {
-                tx.send(i).await.unwrap();
+                tx.send(msg).await.unwrap();
             }
         }));
     }
@@ -44,7 +110,7 @@ async fn kanal_async(c: usize, task_count: usize) {
 }
 
 fn benchmark_kanal_async(c: &mut Criterion) {
-    const MAX_THREADS: [usize; 1] = [16];
+    const MAX_THREADS: [usize; 1] = [8];
     const CAPACITY: usize = 1024;
     const TASKS: [usize; 1] = [1000];
     for thread_num in MAX_THREADS {
