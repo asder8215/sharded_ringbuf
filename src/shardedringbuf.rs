@@ -705,7 +705,10 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
         // this item in memory
         // unsafe {
             // ptr::drop_in_place((*inner.items[dequeue_index].get()).as_mut_ptr());
-        // }
+        // } 
+        // ^ Note don't do this: I misunderstood assume_init_read() when it said 
+        // "resulting T is subject to the usual drop handling"; it just means that 
+        // you have T, and T will act accordingly with T's Drop when T goes out of scope
         item
     }
 
