@@ -926,6 +926,11 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
         self.poisoned.load(Ordering::Relaxed)
     }
 
+    /// Notifies one dequeuer task assigned to each shard.
+    /// 
+    /// Time Complexity: O(s) where s is the number of shards
+    /// 
+    /// Space Complexity: O(1)
     #[inline(always)]
     pub fn notify_pin_shard(&self, shard_ind: usize) {
         assert!(shard_ind < self.get_num_of_shards(), "Shard index must be within the number of shards that exist");
