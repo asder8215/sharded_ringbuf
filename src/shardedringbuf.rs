@@ -20,9 +20,7 @@ use tokio::{runtime::Handle, sync::Notify, task::yield_now};
 #[derive(Debug, PartialEq, Eq)]
 enum Acquire {
     Enqueue,
-    EnqueueFull{
-        batch_count: usize
-    },
+    EnqueueFull { batch_count: usize },
     Dequeue,
 }
 
@@ -389,7 +387,7 @@ impl<T> ShardedRingBuf<T> {
     //     }
     //     current
     // }
-async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
+    async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
         /*
          * Tasks start off with a random shard_ind or
          * user provided initial shard ind value % self.shards
@@ -411,7 +409,7 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
                             yield_now().await;
                         }
                         task_node.shard_ind.load(Ordering::Relaxed)
-                    },
+                    }
                     _ => {
                         while !task_node.is_assigned.load(Ordering::Relaxed) {
                             yield_now().await;
@@ -439,10 +437,11 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
         loop {
             // if poisoned and empty, get out of this loop
             if self.poisoned.load(Ordering::Relaxed) {
-                if matches!(get_shard_policy(), ShardPolicyKind::Pin) && self.is_shard_empty(current) {
+                if matches!(get_shard_policy(), ShardPolicyKind::Pin)
+                    && self.is_shard_empty(current)
+                {
                     break;
-                }
-                else if self.is_empty() {
+                } else if self.is_empty() {
                     break;
                 }
             }
@@ -461,11 +460,13 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
                     // Acquire::EnqueueFull {batch_count: _} => self.is_shard_empty(current),
 
                     // checking if the shard is unable to contain a batch gives different range of timing
-                    // performance (sometimes better, sometimes worse). My assumption is that it 
+                    // performance (sometimes better, sometimes worse). My assumption is that it
                     // has to do with cache hits and misses. that's probs the con here, but the pro
                     // is that you're able to enqueue the most out of this shard buffer.
-                    Acquire::EnqueueFull {batch_count} => !self.is_shard_full_batch(current, batch_count),
-                    
+                    Acquire::EnqueueFull { batch_count } => {
+                        !self.is_shard_full_batch(current, batch_count)
+                    }
+
                     Acquire::Enqueue => !self.is_shard_full(current),
                     Acquire::Dequeue => !self.is_shard_empty(current),
                 } {
@@ -501,8 +502,7 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
                 // yield_now().await;
                 if matches!(acquire, Acquire::Dequeue) {
                     self.job_post_shard_notifs[current].notified().await;
-                }
-                else {
+                } else {
                     self.job_space_shard_notifs[current].notified().await;
                 }
             } else if !matches!(get_shard_policy(), ShardPolicyKind::Cft) {
@@ -621,7 +621,6 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
         self.enqueue_item(item).await;
     }
 
-
     /// Retrieves an item of type T from the RingBuffer if an item exists in the buffer.
     /// If the ring buffer is set with a poisoned flag or received a poison pill,
     /// this method will return None.
@@ -633,7 +632,11 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
         // If we have multiple shards or multiple worker threads,
         // we need to use locking
         if self.get_num_of_shards() != 1 || Handle::current().metrics().num_workers() != 1 {
-            let current = self.try_acquire_shard(Acquire::EnqueueFull{batch_count: items.len()}).await;
+            let current = self
+                .try_acquire_shard(Acquire::EnqueueFull {
+                    batch_count: items.len(),
+                })
+                .await;
             if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
                 return;
             }
@@ -685,7 +688,6 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
         // }
     }
 
-
     /// Grab the inner ring buffer shard, dequeue the item, update the dequeue index
     #[inline(always)]
     fn dequeue_in_shard(&self, shard_ind: usize) -> T {
@@ -704,10 +706,10 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
         // SAFETY: We just copied the item by value, so we no longer need to hold
         // this item in memory
         // unsafe {
-            // ptr::drop_in_place((*inner.items[dequeue_index].get()).as_mut_ptr());
-        // } 
-        // ^ Note don't do this: I misunderstood assume_init_read() when it said 
-        // "resulting T is subject to the usual drop handling"; it just means that 
+        // ptr::drop_in_place((*inner.items[dequeue_index].get()).as_mut_ptr());
+        // }
+        // ^ Note don't do this: I misunderstood assume_init_read() when it said
+        // "resulting T is subject to the usual drop handling"; it just means that
         // you have T, and T will act accordingly with T's Drop when T goes out of scope
         item
     }
@@ -729,10 +731,11 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
             // }
 
             if self.poisoned.load(Ordering::Relaxed) {
-                if matches!(get_shard_policy(), ShardPolicyKind::Pin) && self.is_shard_empty(current) {
+                if matches!(get_shard_policy(), ShardPolicyKind::Pin)
+                    && self.is_shard_empty(current)
+                {
                     return None;
-                }
-                else if self.is_empty() {
+                } else if self.is_empty() {
                     return None;
                 }
             }
@@ -793,10 +796,11 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
             // }
 
             if self.poisoned.load(Ordering::Relaxed) {
-                if matches!(get_shard_policy(), ShardPolicyKind::Pin) && self.is_shard_empty(current) {
+                if matches!(get_shard_policy(), ShardPolicyKind::Pin)
+                    && self.is_shard_empty(current)
+                {
                     return None;
-                }
-                else if self.is_empty() {
+                } else if self.is_empty() {
                     return None;
                 }
             }
@@ -930,13 +934,16 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
     }
 
     /// Notifies one dequeuer task assigned to each shard.
-    /// 
+    ///
     /// Time Complexity: O(s) where s is the number of shards
-    /// 
+    ///
     /// Space Complexity: O(1)
     #[inline(always)]
     pub fn notify_pin_shard(&self, shard_ind: usize) {
-        assert!(shard_ind < self.get_num_of_shards(), "Shard index must be within the number of shards that exist");
+        assert!(
+            shard_ind < self.get_num_of_shards(),
+            "Shard index must be within the number of shards that exist"
+        );
         // while self.deq_fin_taken.get() {}
         self.job_post_shard_notifs[shard_ind].notify_one();
         // self.job_post_shard_notifs[shard_ind].notify_waiters();
@@ -1157,8 +1164,8 @@ async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
         jobs == item_len
     }
 
-    /// Checks to see if a specific shard is unable to support batching a 
-    /// certain number of items 
+    /// Checks to see if a specific shard is unable to support batching a
+    /// certain number of items
     ///
     /// Time Complexity: O(1)
     ///
@@ -1904,7 +1911,7 @@ impl<T> Drop for ShardedRingBuf<T> {
 //                     unsafe {
 //                         let _ = Box::from_raw(ptr as *mut T);
 //                     }
-//                 } 
+//                 }
 //                 else {
 //                     // SAFETY: If the ptr is null, then there's no item here, but we still
 //                     // need to drop the heap allocation for the MaybeUninit

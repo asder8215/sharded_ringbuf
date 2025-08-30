@@ -1,7 +1,11 @@
 use crate::{
-    guards::TaskDoneGuard, shard_policies::ShardPolicyKind, task_locals::{
-        get_shard_ind, set_shard_ind, set_task_node, SHARD_INDEX, SHARD_POLICY, SHIFT, TASK_NODE
-    }, task_node::{TaskNode, TaskNodePtr, TaskRole}, MLFShardedRingBuf, ShardPolicy, ShardedRingBuf
+    MLFShardedRingBuf, ShardPolicy, ShardedRingBuf,
+    guards::TaskDoneGuard,
+    shard_policies::ShardPolicyKind,
+    task_locals::{
+        SHARD_INDEX, SHARD_POLICY, SHIFT, TASK_NODE, get_shard_ind, set_shard_ind, set_task_node,
+    },
+    task_node::{TaskNode, TaskNodePtr, TaskRole},
 };
 use futures_util::{Stream, StreamExt};
 use std::{
@@ -31,14 +35,18 @@ where
         counter += 1;
 
         match policy {
-            ShardPolicy::Sweep { initial_index } => {},
-            ShardPolicy::RandomAndSweep => {},
-            ShardPolicy::ShiftBy { initial_index, shift } => todo!(),
+            ShardPolicy::Sweep { initial_index } => {}
+            ShardPolicy::RandomAndSweep => {}
+            ShardPolicy::ShiftBy {
+                initial_index,
+                shift,
+            } => todo!(),
             ShardPolicy::Pin { initial_index } => {
                 // println!("I completed work as a Enqueuer and need to notify Deq");
-                buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
+                buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()]
+                    .notify_one();
                 // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_waiters();
-            },
+            }
         }
 
         counter
@@ -102,15 +110,18 @@ where
         }
 
         match policy {
-            ShardPolicy::Sweep { initial_index } => {},
-            ShardPolicy::RandomAndSweep => {},
-            ShardPolicy::ShiftBy { initial_index, shift } => {},
+            ShardPolicy::Sweep { initial_index } => {}
+            ShardPolicy::RandomAndSweep => {}
+            ShardPolicy::ShiftBy {
+                initial_index,
+                shift,
+            } => {}
             ShardPolicy::Pin { initial_index } => {
                 // println!("I completed work as a Enqueuer and need to notify Deq");
-                buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
+                buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()]
+                    .notify_one();
                 // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_waiters();
-
-            },
+            }
         };
 
         counter
@@ -173,15 +184,17 @@ where
         }
 
         match policy {
-            ShardPolicy::Sweep { initial_index } => {},
-            ShardPolicy::RandomAndSweep => {},
-            ShardPolicy::ShiftBy { initial_index, shift } => {},
+            ShardPolicy::Sweep { initial_index } => {}
+            ShardPolicy::RandomAndSweep => {}
+            ShardPolicy::ShiftBy {
+                initial_index,
+                shift,
+            } => {}
             ShardPolicy::Pin { initial_index } => {
                 // println!("I completed work as a Enqueuer and need to notify Deq");
                 // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
                 // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_waiters();
-
-            },
+            }
         };
 
         counter
@@ -302,13 +315,17 @@ where
         }
 
         match policy {
-            ShardPolicy::Sweep { initial_index } => {},
-            ShardPolicy::RandomAndSweep => {},
-            ShardPolicy::ShiftBy { initial_index, shift } => todo!(),
+            ShardPolicy::Sweep { initial_index } => {}
+            ShardPolicy::RandomAndSweep => {}
+            ShardPolicy::ShiftBy {
+                initial_index,
+                shift,
+            } => todo!(),
             ShardPolicy::Pin { initial_index } => {
                 // println!("I completed work as a Enqueuer and need to notify Deq");
-                buffer.job_space_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
-            },
+                buffer.job_space_shard_notifs[initial_index % buffer.get_num_of_shards()]
+                    .notify_one();
+            }
         }
 
         counter
@@ -377,13 +394,16 @@ where
         }
         // println!("done");
         let _ = match policy {
-            ShardPolicy::Sweep { initial_index } => {},
-            ShardPolicy::RandomAndSweep => {},
-            ShardPolicy::ShiftBy { initial_index, shift } => {},
+            ShardPolicy::Sweep { initial_index } => {}
+            ShardPolicy::RandomAndSweep => {}
+            ShardPolicy::ShiftBy {
+                initial_index,
+                shift,
+            } => {}
             ShardPolicy::Pin { initial_index } => {
                 // println!("I completed work as a Enqueuer and need to notify Deq");
                 // buffer.job_space_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
-            },
+            }
         };
         // println!("I'm here");
         counter
@@ -696,8 +716,10 @@ where
 {
     let enq_fut = async move {
         let mut counter = 0;
-        // loop { 
-        let full_enq = buffer.get_shard_capacity(buffer.get_num_of_shards() - 1).unwrap();
+        // loop {
+        let full_enq = buffer
+            .get_shard_capacity(buffer.get_num_of_shards() - 1)
+            .unwrap();
         let mut enq_vec = Vec::with_capacity(full_enq);
         for item in items {
             if counter != 0 && counter % full_enq == 0 {
@@ -710,20 +732,24 @@ where
                 counter += 1;
             }
         }
-        
+
         if enq_vec.len() != 0 {
             buffer.enqueue_full(enq_vec).await;
         }
 
         match policy {
-            ShardPolicy::Sweep { initial_index } => {},
-            ShardPolicy::RandomAndSweep => {},
-            ShardPolicy::ShiftBy { initial_index, shift } => todo!(),
+            ShardPolicy::Sweep { initial_index } => {}
+            ShardPolicy::RandomAndSweep => {}
+            ShardPolicy::ShiftBy {
+                initial_index,
+                shift,
+            } => todo!(),
             ShardPolicy::Pin { initial_index } => {
                 // println!("I completed work as a Enqueuer and need to notify Deq");
-                buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
+                buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()]
+                    .notify_one();
                 // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_waiters();
-            },
+            }
         }
 
         counter
@@ -762,7 +788,6 @@ where
         )),
     }
 }
-
 
 /// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
 /// context for the purpose of dequeuing items from a shard fully an unbounded number of times from a `ShardedRingBuf<T>`.

@@ -1,4 +1,4 @@
-use std::{thread::sleep, time::{Duration, Instant}};
+use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use kanal::bounded_async;
@@ -116,7 +116,12 @@ async fn kanal_async(c: usize, task_count: usize) {
     }
 }
 
-async fn kanal_async_with_msg_vec(msg_vecs: Vec<Vec<BigData>>, c: usize, task_count: usize, msg_count: usize) {
+async fn kanal_async_with_msg_vec(
+    msg_vecs: Vec<Vec<BigData>>,
+    c: usize,
+    task_count: usize,
+    msg_count: usize,
+) {
     let (s, r) = bounded_async(c);
     let mut handles = Vec::new();
 
@@ -148,13 +153,14 @@ async fn kanal_async_with_msg_vec(msg_vecs: Vec<Vec<BigData>>, c: usize, task_co
     }
 }
 
-
 fn benchmark_kanal_async(c: &mut Criterion) {
     const MAX_THREADS: [usize; 1] = [8];
-    const CAPACITY: usize = 1;
+    const CAPACITY: usize = 128;
     const TASKS: [usize; 1] = [100000];
-    const MSG_COUNT: usize = 5;
-    let msg = BigData { buf: Box::new([0; 8]) };
+    const MSG_COUNT: usize = 1;
+    let msg = BigData {
+        buf: Box::new([0; 8]),
+    };
     let mut msg_vecs = Vec::with_capacity(TASKS[0]);
     for _ in 0..TASKS[0] {
         msg_vecs.push(Vec::with_capacity(MSG_COUNT));
@@ -163,8 +169,6 @@ fn benchmark_kanal_async(c: &mut Criterion) {
             msg_vecs[msg_vecs_len - 1].push(msg.clone());
         }
     }
-
-
 
     // for thread_num in MAX_THREADS {
     //     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -193,8 +197,6 @@ fn benchmark_kanal_async(c: &mut Criterion) {
     //     }
     // }
 
-
-    
     for thread_num in MAX_THREADS {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -214,14 +216,15 @@ fn benchmark_kanal_async(c: &mut Criterion) {
                 |b, &cap| {
                     // Insert a call to `to_async` to convert the bencher to async mode.
                     // The timing loops are the same as with the normal bencher.
-                     b.to_async(&runtime).iter_custom(|iters| {
+                    b.to_async(&runtime).iter_custom(|iters| {
                         let msg_vecs = msg_vecs.clone();
                         async move {
                             let mut total = Duration::ZERO;
                             for _ in 0..iters {
                                 let msg_vecs = msg_vecs.clone();
                                 let start = Instant::now();
-                                kanal_async_with_msg_vec(msg_vecs, cap, task_count, MSG_COUNT).await;
+                                kanal_async_with_msg_vec(msg_vecs, cap, task_count, MSG_COUNT)
+                                    .await;
                                 let end = Instant::now();
                                 total += end - start;
                             }

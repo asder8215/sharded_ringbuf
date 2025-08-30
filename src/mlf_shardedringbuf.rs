@@ -9,8 +9,8 @@ use std::{
     cell::UnsafeCell,
     fmt::{Debug, Write},
     mem::MaybeUninit,
-    ptr::{self, null},
-    sync::atomic::{AtomicBool, AtomicI8, AtomicPtr, AtomicU8, AtomicUsize, Ordering},
+    ptr::{self},
+    sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicUsize, Ordering},
 };
 use tokio::{sync::Notify, task::yield_now};
 
@@ -27,26 +27,12 @@ enum Acquire {
 pub struct MLFShardedRingBuf<T> {
     /// Total capacity of the buffer
     capacity: AtomicUsize,
-    /// Used to determine which shard a thread-task pair should work on
-    /// CachePadded to prevent false sharing
-    shard_locks: Box<[CachePadded<AtomicBool>]>,
     /// Multiple InnerRingBuffer structure based on num of shards
     /// CachePadded to prevent false sharing
     inner_rb: Box<[CachePadded<InnerRingBuffer<T>>]>,
-    /// Poison signal of the ring buffer
-    poisoned: AtomicBool,
 
     pub(crate) job_space_shard_notifs: Box<[Notify]>,
     pub(crate) job_post_shard_notifs: Box<[Notify]>,
-
-    // The fields below are for CFT policy
-    /// The head of the TaskNode linked list for CFT
-    pub(crate) head: AtomicPtr<TaskNode>,
-    /// Signals whether the assigner is spawned already or not
-    pub(crate) assigner_spawned: AtomicBool,
-    /// Signals whether the assigner is terminated or not
-    // pub(crate) assigner_terminate: AtomicBool,
-    pub assigner_terminate: AtomicBool,
 }
 
 // An inner ring buffer to contain the items, enqueue and dequeue index for ShardedRingBuf struct
@@ -67,16 +53,16 @@ struct Slot<T> {
     /// contains the actual item
     item: UnsafeCell<MaybeUninit<Option<T>>>,
     /// 0: empty, 1: full, 2: in progress (deq), 3: in progress (enq)
-    state: AtomicU8
+    state: AtomicU8,
 }
 
 /// Implements the Slot functions
 impl<T> Slot<T> {
     #[inline(always)]
     fn new() -> Self {
-        Slot { 
-            item: UnsafeCell::new(MaybeUninit::uninit()), 
-            state: AtomicU8::new(0), 
+        Slot {
+            item: UnsafeCell::new(MaybeUninit::uninit()),
+            state: AtomicU8::new(0),
         }
     }
 }
@@ -118,13 +104,6 @@ impl<T> MLFShardedRingBuf<T> {
         let mut remainder = capacity % shards;
         Self {
             capacity: AtomicUsize::new(capacity),
-            shard_locks: {
-                let mut vec = Vec::with_capacity(shards);
-                for _i in 0..shards {
-                    vec.push(CachePadded::new(AtomicBool::new(false)));
-                }
-                vec.into_boxed_slice()
-            },
             inner_rb: {
                 let mut vec = Vec::with_capacity(shards);
                 for _ in 0..shards {
@@ -139,7 +118,6 @@ impl<T> MLFShardedRingBuf<T> {
                 }
                 vec.into_boxed_slice()
             },
-            poisoned: AtomicBool::new(false),
             job_post_shard_notifs: {
                 let mut vec = Vec::with_capacity(shards);
                 for _ in 0..shards {
@@ -156,19 +134,7 @@ impl<T> MLFShardedRingBuf<T> {
                 }
                 vec.into_boxed_slice()
             },
-            head: AtomicPtr::new(ptr::null_mut()),
-            assigner_spawned: AtomicBool::new(false),
-            assigner_terminate: AtomicBool::new(false),
         }
-    }
-
-    /// Assigner task uses this to get the head of the linked list in a
-    /// relaxed manner
-    /// Private to the crate because a user should NOT have access
-    /// to any of these TaskNodes
-    #[inline(always)]
-    pub(crate) fn get_head_relaxed(&self) -> TaskNodePtr {
-        TaskNodePtr(self.head.load(Ordering::Relaxed))
     }
 
     /// Returns the number of shards used in this buffer
@@ -178,7 +144,7 @@ impl<T> MLFShardedRingBuf<T> {
     /// Space Complexity: O(1)
     #[inline(always)]
     pub fn get_num_of_shards(&self) -> usize {
-        self.shard_locks.len()
+        self.inner_rb.len()
     }
 
     /// Returns the capacity of a specific shard in this buffer
@@ -189,7 +155,7 @@ impl<T> MLFShardedRingBuf<T> {
     /// Space Complexity: O(1)
     #[inline(always)]
     pub fn get_shard_capacity(&self, shard_ind: usize) -> Option<usize> {
-        if shard_ind >= self.shard_locks.len() {
+        if shard_ind >= self.inner_rb.len() {
             return None;
         }
 
@@ -212,32 +178,10 @@ impl<T> MLFShardedRingBuf<T> {
          * user provided initial shard ind value % self.shards
          * before going around a circle
          */
-        let shard_count = self.shard_locks.len();
-        let mut slot_ind = 0;
+        let shard_count = self.inner_rb.len();
         let mut current = match get_shard_policy() {
             ShardPolicyKind::RandomAndSweep => frand(0..shard_count),
-            ShardPolicyKind::Cft => {
-                // What CFT relies on for its starting index is what's written
-                // to this specific task's TaskNodePtr by the assigner task
-                let task_node = unsafe { &*get_task_node().0 };
-                match acquire {
-                    Acquire::Dequeue => {
-                        while !task_node.is_assigned.load(Ordering::Relaxed) {
-                            if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
-                                return (0, 0);
-                            }
-                            yield_now().await;
-                        }
-                        task_node.shard_ind.load(Ordering::Relaxed)
-                    },
-                    _ => {
-                        while !task_node.is_assigned.load(Ordering::Relaxed) {
-                            yield_now().await;
-                        }
-                        task_node.shard_ind.load(Ordering::Relaxed)
-                    }
-                }
-            }
+            ShardPolicyKind::Cft => 0,
             // Both SweepBy and ShiftBy use the same method of getting its starting
             // index
             _ => {
@@ -258,16 +202,13 @@ impl<T> MLFShardedRingBuf<T> {
             let slot_taken = self.take_slot(acquire, current).await;
             if let Some(slot) = slot_taken {
                 set_shard_ind(current);
-                current = slot.0;
-                slot_ind = slot.1;
-                break;
+                return slot;
             }
 
             if matches!(get_shard_policy(), ShardPolicyKind::Pin) {
                 if matches!(acquire, Acquire::Dequeue) {
                     self.job_post_shard_notifs[current].notified().await;
-                }
-                else {
+                } else {
                     self.job_space_shard_notifs[current].notified().await;
                 }
             } else if !matches!(get_shard_policy(), ShardPolicyKind::Cft) {
@@ -297,9 +238,7 @@ impl<T> MLFShardedRingBuf<T> {
                 }
                 yield_now().await;
             }
-
         }
-        (current, slot_ind)
     }
 
     #[inline(always)]
@@ -308,29 +247,35 @@ impl<T> MLFShardedRingBuf<T> {
         if matches!(acquire, Acquire::Enqueue) {
             let enq_ind = inner.enqueue_index.fetch_add(1, Ordering::AcqRel) % inner.items.len();
             loop {
-                let acquire_slot = inner.items[enq_ind].state.compare_exchange(0, 3, Ordering::AcqRel, Ordering::Relaxed);
+                let acquire_slot = inner.items[enq_ind].state.compare_exchange(
+                    0,
+                    3,
+                    Ordering::AcqRel,
+                    Ordering::Relaxed,
+                );
                 match acquire_slot {
-                        Ok(_) => {
-                            return Some((shard_ind, enq_ind))
-                        },
-                        Err(actual) => {
-                            if actual == 2 {
-                                self.job_space_shard_notifs[shard_ind].notified().await;
-                            } else {
-                                self.job_post_shard_notifs[shard_ind].notify_one();
-                                self.job_space_shard_notifs[shard_ind].notified().await;
-                            }
+                    Ok(_) => return Some((shard_ind, enq_ind)),
+                    Err(actual) => {
+                        if actual == 2 {
+                            self.job_space_shard_notifs[shard_ind].notified().await;
+                        } else {
+                            self.job_post_shard_notifs[shard_ind].notify_one();
+                            self.job_space_shard_notifs[shard_ind].notified().await;
                         }
                     }
                 }
-            } else {
+            }
+        } else {
             let deq_ind = inner.dequeue_index.fetch_add(1, Ordering::AcqRel) % inner.items.len();
             loop {
-                let acquire_slot = inner.items[deq_ind].state.compare_exchange(1, 2, Ordering::AcqRel, Ordering::Relaxed);
+                let acquire_slot = inner.items[deq_ind].state.compare_exchange(
+                    1,
+                    2,
+                    Ordering::AcqRel,
+                    Ordering::Relaxed,
+                );
                 match acquire_slot {
-                    Ok(_) => {
-                        return Some((shard_ind, deq_ind))
-                    },
+                    Ok(_) => return Some((shard_ind, deq_ind)),
                     Err(actual) => {
                         if actual == 3 {
                             self.job_post_shard_notifs[shard_ind].notified().await;
@@ -350,15 +295,15 @@ impl<T> MLFShardedRingBuf<T> {
         match acquire {
             Acquire::Dequeue => {
                 inner.items[slot_ind].state.store(0, Ordering::Relaxed);
-                if matches!(get_shard_policy(), ShardPolicyKind::Pin) {
-                    self.job_space_shard_notifs[shard_ind].notify_one();
-                }
-            },
+                // if matches!(get_shard_policy(), ShardPolicyKind::Pin) {
+                self.job_space_shard_notifs[shard_ind].notify_one();
+                // }
+            }
             Acquire::Enqueue => {
                 inner.items[slot_ind].state.store(1, Ordering::Relaxed);
-                if matches!(get_shard_policy(), ShardPolicyKind::Pin) {
-                    self.job_post_shard_notifs[shard_ind].notify_one();
-                }
+                // if matches!(get_shard_policy(), ShardPolicyKind::Pin) {
+                self.job_post_shard_notifs[shard_ind].notify_one();
+                // }
             }
         }
     }
@@ -395,10 +340,6 @@ impl<T> MLFShardedRingBuf<T> {
     ///
     /// Space complexity: O(1)
     pub(crate) async fn enqueue(&self, item: T) {
-        // if self.poisoned.load(Ordering::Relaxed) {
-        //     println!("Can't enqueue anymore. Ring buffer is poisoned.");
-        //     return;
-        // }
         self.enqueue_item(Some(item)).await;
     }
 
@@ -439,43 +380,33 @@ impl<T> MLFShardedRingBuf<T> {
     ///
     /// Space Complexity: O(1)
     #[inline(always)]
-    pub fn poison_at_shard(&self, shard_ind: usize) {
-        assert!(shard_ind < self.get_num_of_shards(), "Shard index must be within the number of shards that exist");
-        let inner = &self.inner_rb[shard_ind];
-        let enq_ind = (inner.enqueue_index.fetch_add(1, Ordering::AcqRel)) % inner.items.len();
-        self.enqueue_in_slot(shard_ind, enq_ind, None);
-        inner.items[enq_ind].state.store(1, Ordering::Relaxed);
-    }
-
-    /// Clears the poison flag
-    ///
-    /// Time Complexity: O(1)
-    ///
-    /// Space Complexity: O(1)
-    #[inline(always)]
-    pub fn clear_poison(&self) {
-        self.poisoned.store(false, Ordering::Relaxed);
-    }
-
-
-    /// Checks to see if the buffer is poisoned
-    ///
-    /// Time Complexity: O(1)
-    ///
-    /// Space Complexity: O(1)
-    #[inline(always)]
-    pub fn is_poisoned(&self) -> bool {
-        self.poisoned.load(Ordering::Relaxed)
+    pub async fn poison_at_shard(&self, shard_ind: usize) {
+        assert!(
+            shard_ind < self.get_num_of_shards(),
+            "Shard index must be within the number of shards that exist"
+        );
+        // let inner = &self.inner_rb[shard_ind];
+        // let enq_ind = (inner.enqueue_index.fetch_add(1, Ordering::AcqRel)) % inner.items.len();
+        // self.enqueue_in_slot(shard_ind, enq_ind, None);
+        // inner.items[enq_ind].state.store(1, Ordering::Relaxed);
+        let slot = self.take_slot(Acquire::Enqueue, shard_ind).await;
+        if let Some(slot) = slot {
+            self.enqueue_in_slot(slot.0, slot.1, None);
+            self.release_slot(slot.0, slot.1, Acquire::Enqueue);
+        }
     }
 
     /// Notifies one dequeuer task assigned to each shard.
-    /// 
+    ///
     /// Time Complexity: O(s) where s is the number of shards
-    /// 
+    ///
     /// Space Complexity: O(1)
     #[inline(always)]
     pub fn notify_pin_shard(&self, shard_ind: usize) {
-        assert!(shard_ind < self.get_num_of_shards(), "Shard index must be within the number of shards that exist");
+        assert!(
+            shard_ind < self.get_num_of_shards(),
+            "Shard index must be within the number of shards that exist"
+        );
         self.job_post_shard_notifs[shard_ind].notify_one();
     }
 
@@ -490,7 +421,7 @@ impl<T> MLFShardedRingBuf<T> {
     /// Space complexity: O(1)
     pub fn clear(&self) {
         // reset each shard's inner ring buffer
-        for shard in 0..self.shard_locks.len() {
+        for shard in 0..self.inner_rb.len() {
             let inner = &self.inner_rb[shard];
             let mut drop_index = inner.dequeue_index.load(Ordering::Acquire) % inner.items.len();
             let stop_index = inner.enqueue_index.load(Ordering::Acquire) % inner.items.len();
@@ -498,9 +429,13 @@ impl<T> MLFShardedRingBuf<T> {
                 // SAFETY: This will only clear out initialized values that have not
                 // been dequeued. Note here that this method uses Relaxed loads.
                 unsafe {
-                    ptr::drop_in_place((*self.inner_rb[shard].items[drop_index].item.get()).as_mut_ptr())
+                    ptr::drop_in_place(
+                        (*self.inner_rb[shard].items[drop_index].item.get()).as_mut_ptr(),
+                    )
                 }
-                self.inner_rb[shard].items[drop_index].state.store(0, Ordering::Relaxed);
+                self.inner_rb[shard].items[drop_index]
+                    .state
+                    .store(0, Ordering::Relaxed);
                 drop_index = (drop_index + 1) % self.inner_rb[shard].items.len();
             }
             self.inner_rb[shard]
@@ -519,7 +454,7 @@ impl<T> MLFShardedRingBuf<T> {
     /// Space Complexity: O(1)
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
-        for i in 0..self.shard_locks.len() {
+        for i in 0..self.inner_rb.len() {
             if !self.is_shard_empty(i) {
                 return false;
             }
@@ -552,7 +487,7 @@ impl<T> MLFShardedRingBuf<T> {
     /// Space Complexity: O(1)
     #[inline(always)]
     pub fn is_full(&self) -> bool {
-        for i in 0..self.shard_locks.len() {
+        for i in 0..self.inner_rb.len() {
             if !self.is_shard_full(i) {
                 return false;
             }
@@ -591,7 +526,7 @@ impl<T> MLFShardedRingBuf<T> {
     /// Space Complexity: O(1)
     #[inline(always)]
     pub fn get_enq_ind_at_shard(&self, shard_ind: usize) -> Option<usize> {
-        if shard_ind >= self.shard_locks.len() {
+        if shard_ind >= self.inner_rb.len() {
             return None;
         }
 
@@ -613,7 +548,7 @@ impl<T> MLFShardedRingBuf<T> {
     /// Space Complexity: O(1)
     #[inline(always)]
     pub fn get_deq_ind_at_shard(&self, shard_ind: usize) -> Option<usize> {
-        if shard_ind >= self.shard_locks.len() {
+        if shard_ind >= self.inner_rb.len() {
             return None;
         }
 
@@ -632,7 +567,7 @@ impl<T> MLFShardedRingBuf<T> {
     /// Space Complexity: O(1)
     #[inline(always)]
     pub fn get_job_count_at_shard(&self, shard_ind: usize) -> Option<usize> {
-        if shard_ind >= self.shard_locks.len() {
+        if shard_ind >= self.inner_rb.len() {
             return None;
         }
 
@@ -699,7 +634,7 @@ impl<T> MLFShardedRingBuf<T> {
     where
         T: Clone,
     {
-        if shard_ind >= self.shard_locks.len() {
+        if shard_ind >= self.inner_rb.len() {
             return None;
         }
 
@@ -741,7 +676,7 @@ impl<T> MLFShardedRingBuf<T> {
     where
         T: Clone,
     {
-        if shard_ind >= self.shard_locks.len() {
+        if shard_ind >= self.inner_rb.len() {
             return None;
         }
 
@@ -834,7 +769,7 @@ impl<T> MLFShardedRingBuf<T> {
     where
         T: Debug,
     {
-        if shard_ind >= self.shard_locks.len() {
+        if shard_ind >= self.inner_rb.len() {
             return;
         }
 
@@ -886,7 +821,7 @@ impl<T> MLFShardedRingBuf<T> {
 
         // Neat thing here is that this for loop owns the guards, so it'll drop the
         // guard for me when it goes to the next iteration
-        for shard_ind in 0..self.shard_locks.len() {
+        for shard_ind in 0..self.inner_rb.len() {
             let inner_shard = &self.inner_rb[shard_ind];
             write!(print_buffer, "[").unwrap();
 
@@ -895,7 +830,8 @@ impl<T> MLFShardedRingBuf<T> {
             for i in 0..inner_shard.items.len() {
                 if i == inner_shard.items.len() - 1 {
                     if self.is_item_in_shard(i, shard_ind) {
-                        let val_ref = unsafe { (*inner_shard.items[i].item.get()).assume_init_ref() };
+                        let val_ref =
+                            unsafe { (*inner_shard.items[i].item.get()).assume_init_ref() };
                         write!(print_buffer, "{val_ref:?}").unwrap();
                     } else {
                         write!(print_buffer, "<uninit>").unwrap();
@@ -926,16 +862,16 @@ unsafe impl<T> Send for InnerRingBuffer<T> {}
 
 // Destructor trait for ShardedRingBuf just in case it gets dropped and its
 // list of AtomicPtrs are not fully cleaned up yet.
-impl<T> Drop for MLFShardedRingBuf<T> {
-    fn drop(&mut self) {
-        let mut current = self.head.load(Ordering::Relaxed);
-        // SAFETY: Once I see null, I know all the nodes have been freed
-        while !current.is_null() {
-            unsafe {
-                let next = (*current).next.load(Ordering::Relaxed);
-                drop(Box::from_raw(current));
-                current = next;
-            }
-        }
-    }
-}
+// impl<T> Drop for MLFShardedRingBuf<T> {
+//     fn drop(&mut self) {
+//         let mut current = self.head.load(Ordering::Relaxed);
+//         // SAFETY: Once I see null, I know all the nodes have been freed
+//         while !current.is_null() {
+//             unsafe {
+//                 let next = (*current).next.load(Ordering::Relaxed);
+//                 drop(Box::from_raw(current));
+//                 current = next;
+//             }
+//         }
+//     }
+// }
