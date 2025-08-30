@@ -1,11 +1,7 @@
 use crate::{
-    ShardPolicy, ShardedRingBuf,
-    guards::TaskDoneGuard,
-    shard_policies::ShardPolicyKind,
-    task_locals::{
-        SHARD_INDEX, SHARD_POLICY, SHIFT, TASK_NODE, get_shard_ind, set_shard_ind, set_task_node,
-    },
-    task_node::{TaskNode, TaskNodePtr, TaskRole},
+    guards::TaskDoneGuard, shard_policies::ShardPolicyKind, task_locals::{
+        get_shard_ind, set_shard_ind, set_task_node, SHARD_INDEX, SHARD_POLICY, SHIFT, TASK_NODE
+    }, task_node::{TaskNode, TaskNodePtr, TaskRole}, MLFShardedRingBuf, ShardPolicy, ShardedRingBuf
 };
 use futures_util::{Stream, StreamExt};
 use std::{
@@ -112,6 +108,77 @@ where
             ShardPolicy::Pin { initial_index } => {
                 // println!("I completed work as a Enqueuer and need to notify Deq");
                 buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
+                // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_waiters();
+
+            },
+        };
+
+        counter
+    };
+    match policy {
+        ShardPolicy::Sweep { initial_index } => spawn(SHIFT.scope(
+            Cell::new(1),
+            SHARD_POLICY.scope(
+                Cell::new(ShardPolicyKind::Sweep),
+                SHARD_INDEX.scope(Cell::new(initial_index), enq_fut),
+            ),
+        )),
+        ShardPolicy::RandomAndSweep => spawn(SHIFT.scope(
+            Cell::new(1),
+            SHARD_POLICY.scope(
+                Cell::new(ShardPolicyKind::RandomAndSweep),
+                SHARD_INDEX.scope(Cell::new(None), enq_fut),
+            ),
+        )),
+        ShardPolicy::ShiftBy {
+            initial_index,
+            shift,
+        } => spawn(SHIFT.scope(
+            Cell::new(shift),
+            SHARD_POLICY.scope(
+                Cell::new(ShardPolicyKind::ShiftBy),
+                SHARD_INDEX.scope(Cell::new(initial_index), enq_fut),
+            ),
+        )),
+        ShardPolicy::Pin { initial_index } => spawn(SHIFT.scope(
+            Cell::new(0),
+            SHARD_POLICY.scope(
+                Cell::new(ShardPolicyKind::Pin),
+                SHARD_INDEX.scope(Cell::new(Some(initial_index)), enq_fut),
+            ),
+        )),
+    }
+}
+
+/// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
+/// context for the purpose of enqueuing items through an iterator onto a `ShardedRingBuf<T>`.
+///
+/// On return, it returns a JoinHandle that, when completed, returns the number of successful
+/// enqueue operations that occurred.
+pub fn mlf_spawn_enqueuer_with_iterator<T, I>(
+    buffer: Arc<MLFShardedRingBuf<T>>,
+    policy: ShardPolicy,
+    items: I,
+) -> JoinHandle<usize>
+where
+    I: IntoIterator<Item = T> + Send + 'static,
+    T: Send + 'static,
+    <I as IntoIterator>::IntoIter: Send,
+{
+    let enq_fut = async move {
+        let mut counter = 0;
+        for item in items {
+            buffer.enqueue(item).await;
+            counter += 1;
+        }
+
+        match policy {
+            ShardPolicy::Sweep { initial_index } => {},
+            ShardPolicy::RandomAndSweep => {},
+            ShardPolicy::ShiftBy { initial_index, shift } => {},
+            ShardPolicy::Pin { initial_index } => {
+                // println!("I completed work as a Enqueuer and need to notify Deq");
+                // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_one();
                 // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_waiters();
 
             },
@@ -384,6 +451,69 @@ where
         }
         // println!("I'm done");
         // buffer.deq_fin_taken.set(false);
+        counter
+    };
+    match policy {
+        ShardPolicy::Sweep { initial_index } => spawn(SHIFT.scope(
+            Cell::new(1),
+            SHARD_POLICY.scope(
+                Cell::new(ShardPolicyKind::Sweep),
+                SHARD_INDEX.scope(Cell::new(initial_index), deq_fut),
+            ),
+        )),
+        ShardPolicy::RandomAndSweep => spawn(SHIFT.scope(
+            Cell::new(1),
+            SHARD_POLICY.scope(
+                Cell::new(ShardPolicyKind::RandomAndSweep),
+                SHARD_INDEX.scope(Cell::new(None), deq_fut),
+            ),
+        )),
+        ShardPolicy::ShiftBy {
+            initial_index,
+            shift,
+        } => spawn(SHIFT.scope(
+            Cell::new(shift),
+            SHARD_POLICY.scope(
+                Cell::new(ShardPolicyKind::ShiftBy),
+                SHARD_INDEX.scope(Cell::new(initial_index), deq_fut),
+            ),
+        )),
+        ShardPolicy::Pin { initial_index } => spawn(SHIFT.scope(
+            Cell::new(0),
+            SHARD_POLICY.scope(
+                Cell::new(ShardPolicyKind::Pin),
+                SHARD_INDEX.scope(Cell::new(Some(initial_index)), deq_fut),
+            ),
+        )),
+    }
+}
+
+/// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
+/// context for the purpose of dequeuing items an unbounded number of times from a `ShardedRingBuf<T>`.
+///
+/// On return, it returns a JoinHandle that, when completed, returns the number of successful
+/// dequeue operations that occurred.
+pub fn mlf_spawn_dequeuer_unbounded<T, F>(
+    buffer: Arc<MLFShardedRingBuf<T>>,
+    policy: ShardPolicy,
+    f: F,
+) -> JoinHandle<usize>
+where
+    F: Fn(T) + Send + 'static,
+    T: Send + 'static,
+{
+    let deq_fut = async move {
+        let mut counter = 0;
+        loop {
+            let deq_item = buffer.dequeue().await;
+            match deq_item {
+                Some(item) => {
+                    f(item);
+                    counter += 1;
+                }
+                None => break,
+            }
+        }
         counter
     };
     match policy {

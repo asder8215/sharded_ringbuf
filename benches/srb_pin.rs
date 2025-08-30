@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use sharded_ringbuf::{spawn_dequeuer, spawn_dequeuer_bounded, spawn_dequeuer_full_unbounded, spawn_enqueuer, spawn_enqueuer_full_with_iterator, terminate_assigner, ShardPolicy};
+use sharded_ringbuf::{mlf_spawn_dequeuer_unbounded, mlf_spawn_enqueuer_with_iterator, spawn_dequeuer, spawn_dequeuer_bounded, spawn_dequeuer_full_unbounded, spawn_enqueuer, spawn_enqueuer_full_with_iterator, terminate_assigner, MLFShardedRingBuf, ShardPolicy};
 use sharded_ringbuf::{ShardedRingBuf, spawn_dequeuer_unbounded, spawn_enqueuer_with_iterator};
 use tokio::spawn;
 use tokio::task::yield_now;
@@ -265,7 +265,9 @@ async fn lfsrb_pin_with_msg_vec(msg_vecs: Vec<Vec<BigData>>, capacity: usize, sh
         async move {
         // let rb = rb.clone();
         loop {
+            // println!("doing stuff");
             for i in 0..shards {
+                // println!("doing stuff");
                 // sleep(Duration::from_nanos(50));
                 rb_clone.notify_pin_shard(i % rb_clone.get_num_of_shards());
             }
@@ -291,7 +293,7 @@ async fn lfsrb_pin_with_msg_vec(msg_vecs: Vec<Vec<BigData>>, capacity: usize, sh
 
     // spawn enq tasks with pin policy
     // for i in 0..task_count {
-    let mut shard= 0;
+    let mut counter= 0;
     // for msg_vec in msg_vecs{
     //     // let msg = Message::default();
     //     // let msg = BigData { buf: Box::new([0; 128 * 1024]) };
@@ -320,13 +322,14 @@ async fn lfsrb_pin_with_msg_vec(msg_vecs: Vec<Vec<BigData>>, capacity: usize, sh
         let handle = spawn_enqueuer_full_with_iterator(
         // let handle = spawn_enqueuer(
             rb.clone(),
-            ShardPolicy::Pin { initial_index: shard },
+            ShardPolicy::Pin { initial_index: counter },
             msg_vec,
             // Box::new(i),
         );
-        shard = shard.wrapping_add(1);
+        counter = counter.wrapping_add(1);
         enq_tasks.push(handle);
     }
+
 
     for i in 0..shards {
         let handle =
@@ -347,6 +350,7 @@ async fn lfsrb_pin_with_msg_vec(msg_vecs: Vec<Vec<BigData>>, capacity: usize, sh
 
     // Wait for enqueuers
     for enq in enq_tasks {
+        // println!("here");
         enq.await.unwrap();
     }
 
@@ -366,28 +370,126 @@ async fn lfsrb_pin_with_msg_vec(msg_vecs: Vec<Vec<BigData>>, capacity: usize, sh
     // notifier_thread.join();
 }
 
+async fn mlfsrb_pin_with_msg_vec(msg_vecs: Vec<Vec<BigData>>, capacity: usize, shards: usize, task_count: usize) {
+    let max_items: usize = capacity;
+
+    let rb = Arc::new(MLFShardedRingBuf::new(max_items, shards));
+
+    let mut deq_tasks = Vec::with_capacity(shards);
+    let mut enq_tasks = Vec::with_capacity(task_count);
+
+    let notifier_task = spawn(
+        {
+            let rb_clone = rb.clone();
+        async move {
+        // let rb = rb.clone();
+        loop {
+            for i in 0..shards {
+                // println!("doing stuff at shard {}", i);
+                // sleep(Duration::from_nanos(50));
+                rb_clone.notify_pin_shard(i % rb_clone.get_num_of_shards());
+            }
+            yield_now().await;        
+        }
+    }});
+    // let notifier_thread = thread::spawn(move || {
+    //     // let message = "Hello from a standard thread!";
+    //     // println!("{}", message);
+    //     // // Can't use await here, use a regular send
+    //     // tx.blocking_send(message).expect("Failed to send message");
+    //     // let rb_clone = rb.clone();
+    //     loop {
+    //         if rb_clone.assigner_terminate.load(std::sync::atomic::Ordering::Relaxed) {
+    //             break;
+    //         }
+    //         for i in 0..shards {
+    //             rb_clone.notify_pin_shard(i % rb_clone.get_num_of_shards());
+    //         }
+    //         sleep(Duration::from_nanos(500));
+    //     }
+    // });
+
+    // spawn enq tasks with pin policy
+    // for i in 0..task_count {
+    let mut counter= 0;
+
+    for msg_vec in msg_vecs {
+        // let msg = Message::default();
+        // let msg = BigData { buf: Box::new([0; 128 * 1024]) };
+        // let mut msg_vec = Vec::new();
+        // for _ in 0..1 {
+        //     msg_vec.push(msg.clone());
+        // }
+        let handle = mlf_spawn_enqueuer_with_iterator(
+        // let handle = spawn_enqueuer(
+            rb.clone(),
+            ShardPolicy::Pin { initial_index: counter },
+            msg_vec,
+            // Box::new(i),
+        );
+        counter = counter.wrapping_add(1);
+        enq_tasks.push(handle);
+    }
+
+    for i in 0..shards {
+        let handle =
+            mlf_spawn_dequeuer_unbounded(rb.clone(), ShardPolicy::Pin { initial_index: i }, |x| {
+                // let _ = test_func(x.item_one);
+                // println!("X is {} with res is {}", x, res);
+            });
+        deq_tasks.push(handle);
+    }
+
+    // for i in 0..16 {
+    //     let handle =
+    //         spawn_dequeuer(rb.clone(), ShardPolicy::Pin { initial_index: i }, |x| {
+    //             test_add(*x);
+    //         });
+    //     deq_tasks.push(handle);
+    // }
+
+    // Wait for enqueuers
+    for enq in enq_tasks {
+        // println!("here");
+        enq.await.unwrap();
+    }
+
+
+    for i in 0..shards {
+        rb.poison_at_shard(i % rb.get_num_of_shards());
+    }
+
+    // Wait for dequeuers
+    for deq in deq_tasks {
+        deq.await.unwrap();
+    }
+    notifier_task.abort();
+    // terminate_assigner(rb.clone());
+    // notifier_thread.join();
+}
+
 fn benchmark_pin(c: &mut Criterion) {
     // const MAX_THREADS: [usize; 2] = [4, 8];
     const MAX_THREADS: [usize; 1] = [8];
-    const CAPACITY: usize = 1024;
+    const CAPACITY: usize = 1;
     // const CAPACITY: usize = 200000;
     // const SHARDS: [usize; 5] = [1, 2, 4, 8, 16];
     // const TASKS: [usize; 5] = [1, 2, 4, 8, 16];
-    const SHARDS: [usize; 1] = [8];
-    const TASKS: [usize; 1] = [1000];
-    // const MSG_COUNT: usize = 128;
+    const SHARDS: [usize; 1] = [1];
+    const TASKS: [usize; 1] = [100000];
+    const MSG_COUNT: usize = 5;
 
 
     // let msg = BigData { buf: Box::new([0; 1 * 1024]) };    
-    // let msg = BigData { buf: Box::new([0; 8]) };
-    // let mut msg_vecs = Vec::with_capacity(TASKS[0]);
-    // for _ in 0..TASKS[0] {
-    //     msg_vecs.push(Vec::with_capacity(MSG_COUNT));
-    //     let msg_vecs_len = msg_vecs.len();
-    //     for _ in 0..MSG_COUNT {
-    //         msg_vecs[msg_vecs_len - 1].push(msg.clone());
-    //     }
-    // }
+    let msg = BigData { buf: Box::new([0; 8]) };
+    let mut msg_vecs = Vec::with_capacity(TASKS[0]);
+    for _ in 0..TASKS[0] {
+        msg_vecs.push(Vec::with_capacity(MSG_COUNT));
+        let msg_vecs_len = msg_vecs.len();
+        for _ in 0..MSG_COUNT {
+            msg_vecs[msg_vecs_len - 1].push(msg.clone());
+        }
+    }
 
 
 
@@ -420,6 +522,75 @@ fn benchmark_pin(c: &mut Criterion) {
     //     }
     // }
 
+    // for thread_num in MAX_THREADS {
+    //     let runtime = tokio::runtime::Builder::new_multi_thread()
+    //         .enable_all()
+    //         .worker_threads(thread_num)
+    //         .build()
+    //         .unwrap();
+
+    //     for shard_num in SHARDS {
+    //         for task_count in TASKS {
+    //             let func_name = format!(
+    //                 "Pin: {} threads, {} shards, {} enq tasks enqueuing 1 million items, {} looping deq full task",
+    //                 thread_num, shard_num, task_count, shard_num
+    //             );
+
+    //             c.bench_with_input(
+    //                 BenchmarkId::new(func_name, CAPACITY),
+    //                 &(CAPACITY),
+    //                 |b, &cap| {
+    //                     // Insert a call to `to_async` to convert the bencher to async mode.
+    //                     // The timing loops are the same as with the normal bencher.
+    //                     b.to_async(&runtime).iter(async || {
+    //                         lfsrb_pin_deq_full(cap, shard_num, task_count).await;
+    //                     });
+    //                 },
+    //             );
+    //         }
+    //     }
+    // }
+
+    // for thread_num in MAX_THREADS {
+    //     let runtime = tokio::runtime::Builder::new_multi_thread()
+    //         .enable_all()
+    //         .worker_threads(thread_num)
+    //         .build()
+    //         .unwrap();
+
+    //     for shard_num in SHARDS {
+    //         for task_count in TASKS {
+    //             let func_name = format!(
+    //                 "Pin: {} threads, {} shards, {} enq tasks enqueuing 1 million items, {} looping deq full task",
+    //                 thread_num, shard_num, task_count, shard_num
+    //             );
+    //             c.bench_with_input(
+    //                 BenchmarkId::new(func_name, CAPACITY),
+    //                 &(CAPACITY),
+    //                 |b, &cap| {
+    //                     // Insert a call to `to_async` to convert the bencher to async mode.
+    //                     // The timing loops are the same as with the normal bencher.
+    //                     // let msg_vec_clone = msg_vecs.clone();
+    //                     b.to_async(&runtime).iter_custom(|iters| {
+    //                         let msg_vecs = msg_vecs.clone();
+    //                         async move {
+    //                         let mut total = Duration::ZERO;
+
+    //                         for _i in 0..iters {
+    //                             let msg_vecs = msg_vecs.clone();
+    //                             let start = Instant::now();
+    //                             lfsrb_pin_with_msg_vec(msg_vecs, cap, shard_num, task_count).await;
+    //                             let end = Instant::now();
+    //                             total += end - start;
+    //                         }
+    //                         total
+    //                     }});
+    //                 },
+    //             );
+    //         }
+    //     }
+    // }
+
     for thread_num in MAX_THREADS {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -433,61 +604,34 @@ fn benchmark_pin(c: &mut Criterion) {
                     "Pin: {} threads, {} shards, {} enq tasks enqueuing 1 million items, {} looping deq full task",
                     thread_num, shard_num, task_count, shard_num
                 );
-
                 c.bench_with_input(
                     BenchmarkId::new(func_name, CAPACITY),
                     &(CAPACITY),
                     |b, &cap| {
                         // Insert a call to `to_async` to convert the bencher to async mode.
                         // The timing loops are the same as with the normal bencher.
-                        b.to_async(&runtime).iter(async || {
-                            lfsrb_pin_deq_full(cap, shard_num, task_count).await;
-                        });
+                        // let msg_vec_clone = msg_vecs.clone();
+                        b.to_async(&runtime).iter_custom(|iters| {
+                            let msg_vecs = msg_vecs.clone();
+                            async move {
+                            let mut total = Duration::ZERO;
+
+                            for _i in 0..iters {
+                                let msg_vecs = msg_vecs.clone();
+                                let start = Instant::now();
+                                mlfsrb_pin_with_msg_vec(msg_vecs, cap, shard_num, task_count).await;
+                                let end = Instant::now();
+                                total += end - start;
+                            }
+                            total
+                        }});
                     },
                 );
             }
         }
     }
 
-    // for thread_num in MAX_THREADS {
-    //     let runtime = tokio::runtime::Builder::new_multi_thread()
-    //         .enable_all()
-    //         .worker_threads(thread_num)
-    //         .build()
-    //         .unwrap();
 
-        // for shard_num in SHARDS {
-        //     for task_count in TASKS {
-        //         let func_name = format!(
-        //             "Pin: {} threads, {} shards, {} enq tasks enqueuing 1 million items, {} looping deq full task",
-        //             thread_num, shard_num, task_count, shard_num
-        //         );
-        //         c.bench_with_input(
-        //             BenchmarkId::new(func_name, CAPACITY),
-        //             &(CAPACITY),
-        //             |b, &cap| {
-        //                 // Insert a call to `to_async` to convert the bencher to async mode.
-        //                 // The timing loops are the same as with the normal bencher.
-        //                 // let msg_vec_clone = msg_vecs.clone();
-        //                 b.to_async(&runtime).iter_custom(|iters| {
-        //                     let msg_vecs = msg_vecs.clone();
-        //                     async move {
-        //                     let mut total = Duration::ZERO;
-
-        //                     for _i in 0..iters {
-        //                         let msg_vecs = msg_vecs.clone();
-        //                         let start = Instant::now();
-        //                         lfsrb_pin_with_msg_vec(msg_vecs, cap, shard_num, task_count).await;
-        //                         let end = Instant::now();
-        //                         total += end - start;
-        //                     }
-        //                     total
-        //                 }});
-        //             },
-        //         );
-        //     }
-        // }
-    // }
 }
 
 criterion_group!(benches, benchmark_pin);

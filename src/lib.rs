@@ -29,6 +29,7 @@
 //! on a different task that likely operates on a different shard.
 
 mod guards;
+mod mlf_shardedringbuf;
 mod shard_policies;
 mod shardedringbuf;
 mod task_local_spawn;
@@ -37,6 +38,7 @@ mod task_node;
 
 pub use shard_policies::ShardPolicy;
 pub use shardedringbuf::ShardedRingBuf;
+pub use mlf_shardedringbuf::MLFShardedRingBuf;
 pub use task_local_spawn::{
     cft_spawn_dequeuer, cft_spawn_dequeuer_bounded, cft_spawn_dequeuer_full,
     cft_spawn_dequeuer_full_bounded, cft_spawn_dequeuer_full_unbounded,
@@ -45,4 +47,5 @@ pub use task_local_spawn::{
     spawn_dequeuer_full, spawn_dequeuer_full_bounded, spawn_dequeuer_full_unbounded,
     spawn_dequeuer_unbounded, spawn_enqueuer, spawn_enqueuer_with_iterator,
     spawn_enqueuer_with_stream, spawn_enqueuer_full_with_iterator, terminate_assigner,
+    mlf_spawn_dequeuer_unbounded, mlf_spawn_enqueuer_with_iterator
 };
