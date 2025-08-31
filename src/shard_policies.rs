@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 /// These are the Shard Acquistion Policies supported by LFShardedRingBuf
 /// All of these policies are meant to be stable, cancel-safe, and should not cause any
 /// memory issues with use in the LFShardedRingBuf. To see about the

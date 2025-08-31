@@ -16,9 +16,11 @@ homepage = "https://github.com/asder8215/sharded_ringbuf"
 documentation = "https://docs.rs/sharded_ringbuf/latest/sharded_ringbuf/"
 
 [dependencies]
+async-executor = "1.13.3"
 crossbeam-utils = "^0.8.21"
 fastrand = "^2.3.0"
 futures-util = "0.3.31"
+smol = "2.0.2"
 tokio = {version = "^1.45.1", features = ["rt", "sync"] }
 
 [dev-dependencies]
@@ -74,3 +76,4 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
+debug = true

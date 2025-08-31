@@ -107,8 +107,7 @@ fn benchmark_cft(c: &mut Criterion) {
         for shard_num in SHARDS {
             for task_count in TASKS {
                 let func_name = format!(
-                    "CFT: {} threads, {} shards, {} enq tasks enqueuing 1 million items, {} looping deq task",
-                    thread_num, shard_num, task_count, shard_num
+                    "CFT: {thread_num} threads, {shard_num} shards, {task_count} enq tasks enqueuing 1 million items, {shard_num} looping deq task"
                 );
 
                 c.bench_with_input(
@@ -136,8 +135,7 @@ fn benchmark_cft(c: &mut Criterion) {
         for shard_num in SHARDS {
             for task_count in TASKS {
                 let func_name = format!(
-                    "Pin: {} threads, {} shards, {} enq tasks enqueuing 1 million items, {} looping deq full task",
-                    thread_num, shard_num, task_count, shard_num
+                    "Pin: {thread_num} threads, {shard_num} shards, {task_count} enq tasks enqueuing 1 million items, {shard_num} looping deq full task"
                 );
 
                 c.bench_with_input(
