@@ -6,7 +6,7 @@ use std::{
     ptr::{self},
     sync::atomic::{AtomicU8, AtomicUsize, Ordering},
 };
-use tokio::{sync::Notify};
+use tokio::sync::Notify;
 
 // Enum used in try_acquire_slot to determine if task
 // is enqueue or dequeue
@@ -17,18 +17,18 @@ enum Acquire {
 }
 
 /// A sharded ring (circular) buffer struct that can only be used in an *async environment*.
-/// 
+///
 /// The key difference about this struct is that it is mostly lock free (hence MLF) because
 /// all the sharded ring buffer uses a lock free queue underneath the hood. The non-lock free
 /// part comes from using Tokio's Notify to wake up sleeping tasks that are not able to enqueue
 /// or dequeue anything in the buffer due to fullness/emptiness. Tokio's Notify uses a Mutex
-/// in its waitlist of wakers. 
-/// 
-/// In theory, a fully lock-free multi-ringbuffer data structure is possible 
+/// in its waitlist of wakers.
+///
+/// In theory, a fully lock-free multi-ringbuffer data structure is possible
 /// with a lock free waitlist of wakers (think of lock free unbounded FIFO queue using a doubly linked list
-/// or even a stack-based style using a lock free singly linked list). 
-/// I would imagine this would be faster than using Mutex<Waitlist> because, in most cases, 
-/// you would be able to add a push a new waiter at the head of the queue whilst popping a waiter from the back 
+/// or even a stack-based style using a lock free singly linked list).
+/// I would imagine this would be faster than using Mutex<Waitlist> because, in most cases,
+/// you would be able to add a push a new waiter at the head of the queue whilst popping a waiter from the back
 /// end of the queue when you notify one waiter. However  
 #[derive(Debug)]
 pub struct MLFShardedRingBuf<T> {

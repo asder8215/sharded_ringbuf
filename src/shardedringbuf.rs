@@ -276,117 +276,6 @@ impl<T> ShardedRingBuf<T> {
     /// with the number of shards being greater than or equal to
     /// max(enqueuers task count, dequeurer task count)
     /// so that each task can find a shard to enqueue or dequeue off from
-    ///
-    /// Space Complexity: O(1)
-    // async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
-    //     /*
-    //      * Tasks start off with a random shard_ind or
-    //      * user provided initial shard ind value % self.shards
-    //      * before going around a circle
-    //      */
-    //     let shard_count = self.shard_locks.len();
-    //     let mut current = match get_shard_policy() {
-    //         ShardPolicyKind::RandomAndSweep => frand(0..shard_count),
-    //         ShardPolicyKind::Cft => {
-    //             // What CFT relies on for its starting index is what's written
-    //             // to this specific task's TaskNodePtr by the assigner task
-    //             let task_node = unsafe { &*get_task_node().0 };
-    //             match acquire {
-    //                 Acquire::Enqueue => {
-    //                     while !task_node.is_assigned.load(Ordering::Relaxed) {
-    //                         yield_now().await;
-    //                     }
-    //                     task_node.shard_ind.load(Ordering::Relaxed)
-    //                 }
-    //                 Acquire::Dequeue => {
-    //                     while !task_node.is_assigned.load(Ordering::Relaxed) {
-    //                         if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
-    //                             return 0;
-    //                         }
-    //                         yield_now().await;
-    //                     }
-    //                     task_node.shard_ind.load(Ordering::Relaxed)
-    //                 }
-    //             }
-    //         }
-    //         // Both SweepBy and ShiftBy use the same method of getting its starting
-    //         // index
-    //         _ => {
-    //             match get_shard_ind() {
-    //                 Some(val) => val % shard_count, // user provided index
-    //                 None => {
-    //                     let val = frand(0..shard_count);
-    //                     set_shard_ind(val);
-    //                     val
-    //                 } // init rand shard for task to look at
-    //             }
-    //         }
-    //     };
-
-    //     let mut spins = 0;
-
-    //     loop {
-    //         // if poisoned and empty, get out of this loop
-    //         if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
-    //             break;
-    //         }
-
-    //         if self.acquire_shard(current) {
-    //             /*
-    //              * We need to acquire the shard first to get a stable view of how many items
-    //              * are on the shard. On the plus side, we can perform all operations within
-    //              * this section in a Relaxed manner.
-    //              */
-    //             if match acquire {
-    //                 Acquire::Enqueue => !self.is_shard_full(current),
-    //                 Acquire::Dequeue => !self.is_shard_empty(current),
-    //             } {
-    //                 // make sure that the shard index value is set to the
-    //                 // next index it should look at instead of starting
-    //                 // from its previous state
-    //                 set_shard_ind((current + get_shift()) % shard_count);
-    //                 break;
-    //             } else {
-    //                 /*
-    //                  * If the shard is full/empty for enqueue/dequeue operation,
-    //                  * then release the lock in a relaxed manner
-    //                  */
-    //                 self.shard_locks[current].store(false, Ordering::Relaxed);
-    //             }
-    //         }
-
-    //         if matches!(get_shard_policy(), ShardPolicyKind::Pin) {
-    //             yield_now().await;
-    //         } else if !matches!(get_shard_policy(), ShardPolicyKind::Cft) {
-    //             // Move to the next index to check if item can be placed inside
-    //             current = (current + get_shift()) % shard_count;
-    //             spins += get_shift();
-
-    //             // yield only once the enqueuers or dequeuers task has went one round through
-    //             // the shard_job buffer
-    //             if spins >= shard_count {
-    //                 if matches!(get_shard_policy(), ShardPolicyKind::ShiftBy) {
-    //                     current = (current + 1) % shard_count;
-    //                 }
-    //                 spins = 0;
-    //                 yield_now().await;
-    //             }
-    //         } else {
-    //             // The dequeuer needs to be updated/reassigned if its pairing
-    //             // enqueuer was completed before yielding here
-    //             let task_node = unsafe { &*get_task_node().0 };
-    //             if matches!(acquire, Acquire::Dequeue)
-    //                 && task_node.is_assigned.load(Ordering::Relaxed)
-    //             {
-    //                 current = unsafe { &*get_task_node().0 }
-    //                     .shard_ind
-    //                     .load(Ordering::Relaxed);
-    //             }
-    //             yield_now().await;
-    //         }
-    //     }
-    //     current
-    // }
     async fn try_acquire_shard(&self, acquire: Acquire) -> usize {
         /*
          * Tasks start off with a random shard_ind or
@@ -466,7 +355,6 @@ impl<T> ShardedRingBuf<T> {
                     Acquire::EnqueueFull { batch_count } => {
                         !self.is_shard_full_batch(current, batch_count)
                     }
-
                     Acquire::Enqueue => !self.is_shard_full(current),
                     Acquire::Dequeue => !self.is_shard_empty(current),
                 } {

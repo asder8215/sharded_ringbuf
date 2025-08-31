@@ -35,11 +35,11 @@ where
         counter += 1;
 
         match policy {
-            ShardPolicy::Sweep { initial_index } => {}
+            ShardPolicy::Sweep { initial_index: _ } => {}
             ShardPolicy::RandomAndSweep => {}
             ShardPolicy::ShiftBy {
-                initial_index,
-                shift,
+                initial_index: _,
+                shift: _,
             } => todo!(),
             ShardPolicy::Pin { initial_index } => {
                 // println!("I completed work as a Enqueuer and need to notify Deq");
@@ -110,11 +110,11 @@ where
         }
 
         match policy {
-            ShardPolicy::Sweep { initial_index } => {}
+            ShardPolicy::Sweep { initial_index: _ } => {}
             ShardPolicy::RandomAndSweep => {}
             ShardPolicy::ShiftBy {
-                initial_index,
-                shift,
+                initial_index: _,
+                shift: _,
             } => {}
             ShardPolicy::Pin { initial_index } => {
                 // println!("I completed work as a Enqueuer and need to notify Deq");
@@ -220,9 +220,7 @@ where
     //     )),
     // }
 
-    spawn(
-        enq_fut
-    )
+    spawn(enq_fut)
 }
 
 /// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
@@ -529,9 +527,7 @@ where
         counter
     };
 
-    spawn(
-        deq_fut
-    )
+    spawn(deq_fut)
 }
 
 /// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
