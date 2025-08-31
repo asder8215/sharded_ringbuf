@@ -302,9 +302,8 @@ impl<T> MLFShardedRingBuf<T> {
 
         // SAFETY: Only one thread will perform this operation
         // And it's guaranteed that an item will exist here
-        let item = unsafe { (*item_cell).assume_init_read() };
 
-        item
+        unsafe { (*item_cell).assume_init_read() }
     }
 
     /// Retrieves an item of type T from the RingBuffer if an item exists in the buffer.
@@ -601,11 +600,7 @@ impl<T> MLFShardedRingBuf<T> {
         unsafe {
             if self.is_item_in_shard(item_ind, shard_ind) {
                 let val_ref = (*inner.items[item_ind].item.get()).assume_init_ref();
-                if let Some(val_ref) = val_ref {
-                    Some(val_ref.clone())
-                } else {
-                    None
-                }
+                val_ref.clone()
             } else {
                 None
             }

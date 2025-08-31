@@ -382,7 +382,7 @@ where
             }
         }
         // println!("done");
-        let _ = match policy {
+        match policy {
             ShardPolicy::Sweep { initial_index } => {}
             ShardPolicy::RandomAndSweep => {}
             ShardPolicy::ShiftBy {
@@ -692,7 +692,7 @@ where
             }
         }
 
-        if enq_vec.len() != 0 {
+        if !enq_vec.is_empty() {
             buffer.enqueue_full(enq_vec).await;
         }
 

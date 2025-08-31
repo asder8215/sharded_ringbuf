@@ -1,8 +1,8 @@
 use criterion::async_executor::AsyncExecutor;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use sharded_ringbuf::{
-    MLFShardedRingBuf, ShardPolicy, mlf_spawn_dequeuer_unbounded, mlf_spawn_enqueuer_with_iterator, spawn_dequeuer_full_unbounded,
-    spawn_enqueuer_full_with_iterator,
+    MLFShardedRingBuf, ShardPolicy, mlf_spawn_dequeuer_unbounded, mlf_spawn_enqueuer_with_iterator,
+    spawn_dequeuer_full_unbounded, spawn_enqueuer_full_with_iterator,
 };
 use sharded_ringbuf::{ShardedRingBuf, spawn_dequeuer_unbounded, spawn_enqueuer_with_iterator};
 use smol::future;
@@ -712,8 +712,7 @@ fn benchmark_pin(c: &mut Criterion) {
         for shard_num in SHARDS {
             for task_count in TASKS {
                 let func_name = format!(
-                    "Pin: {} threads, {} shards, {} enq tasks enqueuing 1 million items, {} looping deq task",
-                    thread_num, shard_num, task_count, shard_num
+                    "Pin: {thread_num} threads, {shard_num} shards, {task_count} enq tasks enqueuing 1 million items, {shard_num} looping deq task"
                 );
 
                 c.bench_with_input(

@@ -375,12 +375,10 @@ impl<T> ShardedRingBuf<T> {
                             self.job_post_shard_notifs[current].notified().await;
                             continue;
                         }
-                    } else {
-                        if matches!(get_shard_policy(), ShardPolicyKind::Pin) {
-                            self.job_post_shard_notifs[current].notify_one();
-                            self.job_space_shard_notifs[current].notified().await;
-                            continue;
-                        }
+                    } else if matches!(get_shard_policy(), ShardPolicyKind::Pin) {
+                        self.job_post_shard_notifs[current].notify_one();
+                        self.job_space_shard_notifs[current].notified().await;
+                        continue;
                     }
                     // any other policies go through a yield_now() approach.
                 }
@@ -589,7 +587,6 @@ impl<T> ShardedRingBuf<T> {
 
         // SAFETY: Only one thread will perform this operation
         // And it's guaranteed that an item will exist here
-        let item = unsafe { (*item_cell).assume_init_read() };
 
         // SAFETY: We just copied the item by value, so we no longer need to hold
         // this item in memory
@@ -599,7 +596,7 @@ impl<T> ShardedRingBuf<T> {
         // ^ Note don't do this: I misunderstood assume_init_read() when it said
         // "resulting T is subject to the usual drop handling"; it just means that
         // you have T, and T will act accordingly with T's Drop when T goes out of scope
-        item
+        unsafe { (*item_cell).assume_init_read() }
     }
 
     /// Retrieves an item of type T from the RingBuffer if an item exists in the buffer.
