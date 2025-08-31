@@ -1,16 +1,13 @@
 use criterion::async_executor::AsyncExecutor;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use sharded_ringbuf::{
-    MLFShardedRingBuf, ShardPolicy, mlf_spawn_dequeuer_unbounded, mlf_spawn_enqueuer_with_iterator,
-    spawn_dequeuer, spawn_dequeuer_bounded, spawn_dequeuer_full_unbounded, spawn_enqueuer,
-    spawn_enqueuer_full_with_iterator, terminate_assigner,
+    MLFShardedRingBuf, ShardPolicy, mlf_spawn_dequeuer_unbounded, mlf_spawn_enqueuer_with_iterator, spawn_dequeuer_full_unbounded,
+    spawn_enqueuer_full_with_iterator,
 };
 use sharded_ringbuf::{ShardedRingBuf, spawn_dequeuer_unbounded, spawn_enqueuer_with_iterator};
-use smol::{Executor, future};
+use smol::future;
 use std::future::Future;
 use std::sync::Arc;
-use std::thread::{self, sleep};
-use std::time::{Duration, Instant};
 use tokio::spawn;
 use tokio::task::yield_now;
 
