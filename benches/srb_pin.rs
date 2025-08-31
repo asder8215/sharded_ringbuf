@@ -1,3 +1,5 @@
+use smol::{future, Executor};
+use criterion::async_executor::AsyncExecutor;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use sharded_ringbuf::{
     MLFShardedRingBuf, ShardPolicy, mlf_spawn_dequeuer_unbounded, mlf_spawn_enqueuer_with_iterator,
@@ -5,6 +7,7 @@ use sharded_ringbuf::{
     spawn_enqueuer_full_with_iterator, terminate_assigner,
 };
 use sharded_ringbuf::{ShardedRingBuf, spawn_dequeuer_unbounded, spawn_enqueuer_with_iterator};
+use std::future::Future;
 use std::sync::Arc;
 use std::thread::{self, sleep};
 use std::time::{Duration, Instant};
@@ -90,6 +93,17 @@ fn mul_stress(iter: usize) -> u128 {
         acc = acc.wrapping_mul(i ^ 0xdeadbeefdeadbeef);
     }
     acc
+}
+
+
+/// Minimal executor adapter so Criterion can call smol::block_on
+#[derive(Clone, Copy)]
+struct SmolExecutor;
+
+impl AsyncExecutor for SmolExecutor {
+    fn block_on<T>(&self, future: impl Future<Output = T>) -> T {
+        future::block_on(future)
+    }
 }
 
 async fn lfsrb_pin(capacity: usize, shards: usize, task_count: usize) {
@@ -434,9 +448,10 @@ async fn mlfsrb_pin_with_msg_vec(
         let handle = mlf_spawn_enqueuer_with_iterator(
             // let handle = spawn_enqueuer(
             rb.clone(),
-            ShardPolicy::Pin {
-                initial_index: counter,
-            },
+            // ShardPolicy::Pin {
+            //     initial_index: counter,
+            // },
+            counter,
             msg_vec,
             // Box::new(i),
         );
@@ -446,10 +461,11 @@ async fn mlfsrb_pin_with_msg_vec(
 
     for i in 0..shards {
         let handle =
-            mlf_spawn_dequeuer_unbounded(rb.clone(), ShardPolicy::Pin { initial_index: i }, |x| {
+            mlf_spawn_dequeuer_unbounded(rb.clone(), i, |x| {
                 // let _ = test_func(x.item_one);
                 // println!("X is {} with res is {}", x, res);
             });
+        
         deq_tasks.push(handle);
     }
 
@@ -488,13 +504,13 @@ async fn mlfsrb_pin_with_msg_vec(
 fn benchmark_pin(c: &mut Criterion) {
     // const MAX_THREADS: [usize; 2] = [4, 8];
     const MAX_THREADS: [usize; 1] = [8];
-    const CAPACITY: usize = 8;
+    const CAPACITY: usize = 128;
     // const CAPACITY: usize = 200000;
     // const SHARDS: [usize; 5] = [1, 2, 4, 8, 16];
     // const TASKS: [usize; 5] = [1, 2, 4, 8, 16];
     const SHARDS: [usize; 1] = [1];
     const TASKS: [usize; 1] = [100000];
-    const MSG_COUNT: usize = 2;
+    const MSG_COUNT: usize = 1;
 
     // let msg = BigData { buf: Box::new([0; 1 * 1024]) };
     let msg = BigData {
@@ -613,6 +629,8 @@ fn benchmark_pin(c: &mut Criterion) {
             .worker_threads(thread_num)
             .build()
             .unwrap();
+
+        // let smol_rt = ;
 
         for shard_num in SHARDS {
             for task_count in TASKS {
