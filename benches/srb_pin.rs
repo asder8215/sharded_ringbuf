@@ -195,15 +195,44 @@ async fn mlfsrb_pin(capacity: usize, shards: usize, task_count: usize) {
     //     );
     //     enq_tasks.push(handle);
     // }
+    // for i in 0..task_count {
+    //     let handle = mlf_spawn_enqueuer_with_iterator(rb.clone(), i, 0..1);
+    //     enq_tasks.push(handle);
+    // }
+
+    // for i in 0..shards {
+    //     let handle = mlf_spawn_dequeuer_unbounded(rb.clone(), i, |x| {
+    //         // test_func(x as u128);
+    //         // println!("{:?}", x);
+    //     });
+    //     deq_tasks.push(handle);
+    // }
+
     for i in 0..task_count {
-        let handle = mlf_spawn_enqueuer_with_iterator(rb.clone(), i, 0..1);
+        let handle = tokio::spawn({
+            let rb_clone = rb.clone();
+            async move {
+                rb_clone.enqueue(i).await;
+            }
+        });
         enq_tasks.push(handle);
     }
 
     for i in 0..shards {
-        let handle = mlf_spawn_dequeuer_unbounded(rb.clone(), i, |x| {
-            // test_func(x as u128);
-            // println!("{:?}", x);
+        let handle = tokio::spawn({
+            let rb_clone = rb.clone();
+            async move {
+                loop {
+                    // let item = rb_clone.dequeue().await;
+                    let item = rb_clone.dequeue_in_shard(i).await;
+                    match item {
+                        None => break,
+                        Some(val) => {
+                            
+                        }
+                    }
+                }
+            }
         });
         deq_tasks.push(handle);
     }
@@ -545,7 +574,7 @@ fn benchmark_pin(c: &mut Criterion) {
     // const SHARDS: [usize; 5] = [1, 2, 4, 8, 16];
     // const TASKS: [usize; 5] = [1, 2, 4, 8, 16];
     const SHARDS: [usize; 1] = [1];
-    const TASKS: [usize; 1] = [100000];
+    const TASKS: [usize; 1] = [100];
 
     // const MSG_COUNT: usize = 250000;
     // // let msg = BigData { buf: Box::new([0; 1 * 1024]) };

@@ -35,12 +35,18 @@ pub struct MLFShardedRingBuf<T> {
     /// Total capacity of the buffer
     capacity: AtomicUsize,
     /// Multiple InnerRingBuffer structure based on num of shards
-    /// CachePadded to prevent false sharing
-    // inner_rb: Box<[CachePadded<InnerRingBuffer<T>>]>,
     inner_rb: Box<[InnerRingBuffer<T>]>,
 
-    // pub(crate) job_space_shard_notifs: Box<[Notify]>,
-    // pub(crate) job_post_shard_notifs: Box<[Notify]>,
+    /// Used as a monotonic increasing counter to determine which
+    /// shard should an enqueuer task place an item in
+    /// Cache Padded to prevent false sharing if spawning an enqueuer
+    /// task happens across multiple threads
+    shard_enq: CachePadded<AtomicUsize>,
+    /// Used as a monotonic increasing counter to determine which
+    /// shard should a dequeuer task place an item in
+    /// Cache Padded to prevent false sharing if spawning an dequeuer
+    /// task happens across multiple threads
+    shard_deq: CachePadded<AtomicUsize>,
 }
 
 // An inner ring buffer to contain the items, enqueue and dequeue index for ShardedRingBuf struct
@@ -49,10 +55,13 @@ struct InnerRingBuffer<T> {
     /// Box of Slots containing the content of the buffer
     /// Cache Padded to avoid false sharing
     items: Box<[CachePadded<Slot<T>>]>,
-    /// Where to enqueue at in the Box
+    /// Where to enqueue at in the items Box
+    /// Cache Padded to avoid false sharing
     enqueue_index: CachePadded<AtomicUsize>,
-    /// Where to dequeue at in the Box
-    // dequeue_index: AtomicUsize,
+    /// Where to dequeue at in the items Box
+    /// Cache Padded to avoid false sharing (though since this
+    /// is the last item, cache padding doesn't really matter
+    /// too much)
     dequeue_index: CachePadded<AtomicUsize>,
 }
 
@@ -63,7 +72,9 @@ struct Slot<T> {
     item: UnsafeCell<MaybeUninit<Option<T>>>,
     /// 0: empty, 1: full, 2: in progress (deq), 3: in progress (enq)
     state: AtomicU8,
+    /// used to notify an enqueuer task that's waiting on this slot 
     enq_notify: Notify,
+    /// used to notify an dequeuer task that's waiting on this slot
     deq_notify: Notify
 }
 
@@ -94,7 +105,6 @@ impl<T> InnerRingBuffer<T> {
                 vec.into_boxed_slice()
             },
             enqueue_index: CachePadded::new(AtomicUsize::new(0)),
-            // dequeue_index: AtomicUsize::new(0),
             dequeue_index: CachePadded::new(AtomicUsize::new(0)),
         }
     }
@@ -122,12 +132,8 @@ impl<T> MLFShardedRingBuf<T> {
                 let mut vec = Vec::with_capacity(shards);
                 for _ in 0..shards {
                     if remainder == 0 {
-                        // vec.push(CachePadded::new(InnerRingBuffer::new(capacity_per_shard)));
                         vec.push(InnerRingBuffer::new(capacity_per_shard));
                     } else {
-                        // vec.push(CachePadded::new(InnerRingBuffer::new(
-                        //     capacity_per_shard + 1,
-                        // )));
                         vec.push(InnerRingBuffer::new(
                             capacity_per_shard + 1,
                         ));
@@ -136,22 +142,8 @@ impl<T> MLFShardedRingBuf<T> {
                 }
                 vec.into_boxed_slice()
             },
-            // job_post_shard_notifs: {
-            //     let mut vec = Vec::with_capacity(shards);
-            //     for _ in 0..shards {
-            //         vec.push(Notify::new());
-            //     }
-            //     vec.into_boxed_slice()
-            // },
-
-            // job_space_shard_notifs: {
-            //     let mut vec = Vec::with_capacity(shards);
-
-            //     for _ in 0..shards {
-            //         vec.push(Notify::new());
-            //     }
-            //     vec.into_boxed_slice()
-            // },
+            shard_enq: CachePadded::new(AtomicUsize::new(0)),
+            shard_deq: CachePadded::new(AtomicUsize::new(0))
         }
     }
 
@@ -190,6 +182,7 @@ impl<T> MLFShardedRingBuf<T> {
         self.capacity.load(Ordering::Relaxed)
     }
 
+    /// Helper function to take a slot at a specific shard in the ring buffer
     #[inline]
     async fn take_slot(&self, acquire: Acquire, shard_ind: usize) -> (usize, usize) {
         let inner = &self.inner_rb[shard_ind];
@@ -280,13 +273,34 @@ impl<T> MLFShardedRingBuf<T> {
         self.release_slot(current.0, current.1, Acquire::Enqueue);
     }
 
-    /// Adds an item of type T to the RingBuffer, *blocking* the thread until there is space to add the item.
+    /// Adds an item of type T to the ring buffer at a provided shard. If the user
+    /// provides a shard index greater than the existing number of shards in the
+    /// buffer, it will perform wrap around (% number of existing shards).
     ///
-    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
+    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a slot in a shard
+    /// (this is usually pretty fast)
+    /// 
+    /// Space complexity: O(1)
+    pub async fn enqueue_in_shard(&self, item: T, shard_ind: usize) {
+        let shard_ind = shard_ind % self.get_num_of_shards();
+        self.enqueue_item(Some(item), shard_ind).await;
+    }
+
+    /// Adds an item of type T to the ring buffer. It uses the ring buffer's shard_enq
+    /// field and mods it with the number of existing shards for the buffer to determine
+    /// which shard this enqueue operation will occur at. As a result, if you have multiple
+    /// shards and one enqueuer task repeatedly using enqueue(), it will sweep across the
+    /// shards and place an item in each.
+    /// 
+    /// If you intend to have an enqueuer task map to a specific shard, use enqueue_in_shard()
+    /// for more control.
+    ///
+    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a slot in the shard.
+    /// (this is usually pretty fast)
     ///
     /// Space complexity: O(1)
-    pub(crate) async fn enqueue(&self, item: T, shard_ind: usize) {
-        let shard_ind = shard_ind % self.get_num_of_shards();
+    pub async fn enqueue(&self, item: T) {
+        let shard_ind = self.shard_enq.fetch_add(1, Ordering::Relaxed) % self.get_num_of_shards();
         self.enqueue_item(Some(item), shard_ind).await;
     }
 
@@ -303,15 +317,16 @@ impl<T> MLFShardedRingBuf<T> {
         unsafe { (*item_cell).assume_init_read() }
     }
 
-    /// Retrieves an item of type T from the RingBuffer if an item exists in the buffer.
-    /// If the ring buffer is set with a poisoned flag or received a poison pill,
+    /// Retrieves an item of type T from the ring buffer. If the user
+    /// provides a shard index greater than the existing number of shards in the
+    /// buffer, it will perform wrap around (% number of existing shards). On a poison pill,
     /// this method will return None.
     ///
-    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
+    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a slot in the shard
     ///
     /// Space Complexity: O(1)
     #[inline(always)]
-    pub(crate) async fn dequeue(&self, shard_ind: usize) -> Option<T> {
+    pub async fn dequeue_in_shard(&self, shard_ind: usize) -> Option<T> {
         let shard_ind = shard_ind % self.get_num_of_shards();
         let current = self.take_slot(Acquire::Dequeue, shard_ind).await;
         let item = self.dequeue_in_slot(current.0, current.1);
@@ -319,10 +334,32 @@ impl<T> MLFShardedRingBuf<T> {
         item
     }
 
-    /// Sets the poison flag of the ring buffer to true. This will prevent enqueuers
-    /// from enqueuing anymore jobs if this method is called while enqueues are occuring.
-    /// However you can use this if you want graceful exit of dequeuers tasks completing
-    /// all available jobs enqueued first before exiting.
+    /// Retrieves an item of type T from the ring buffer. It uses the ring buffer's shard_deq
+    /// field and mods it with the number of existing shards for the buffer to determine
+    /// which shard this dequeue operation will occur at. As a result, if you have multiple
+    /// shards and one dequeuer task repeatedly using dequeue(), it will sweep across the
+    /// shards and place an item in each.
+    /// 
+    /// On a poison pill, this method will return None.
+    /// 
+    /// If you intend to have an dequeuer task map to a specific shard, use dequeue_in_shard()
+    /// for more control.
+    ///
+    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a slot in the shard
+    ///
+    /// Space Complexity: O(1)
+    #[inline(always)]
+    pub async fn dequeue(&self) -> Option<T> {
+        let shard_ind = self.shard_deq.fetch_add(1, Ordering::Relaxed) % self.get_num_of_shards();
+        let current = self.take_slot(Acquire::Dequeue, shard_ind).await;
+        let item = self.dequeue_in_slot(current.0, current.1);
+        self.release_slot(current.0, current.1, Acquire::Dequeue);
+        item
+    }
+
+    /// Enqueues a poison pill at a specific shard. If you intend to make your dequeuer
+    /// task unbounded with its dequeue operations, this should be the method you use
+    /// to break out of the infinite loop.
     ///
     /// Time Complexity: O(1)
     ///

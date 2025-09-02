@@ -158,7 +158,7 @@ async fn kanal_async_with_msg_vec(
 fn benchmark_kanal_async(c: &mut Criterion) {
     const MAX_THREADS: [usize; 1] = [8];
     const CAPACITY: usize = 128;
-    const TASKS: [usize; 1] = [100000];
+    const TASKS: [usize; 1] = [100];
 
     for thread_num in MAX_THREADS {
         let runtime = tokio::runtime::Builder::new_multi_thread()

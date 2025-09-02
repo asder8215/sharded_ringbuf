@@ -180,7 +180,7 @@ where
     let enq_fut = async move {
         let mut counter = 0;
         for item in items {
-            buffer.enqueue(item, shard_ind).await;
+            buffer.enqueue_in_shard(item, shard_ind).await;
             counter += 1;
         }
 
@@ -515,7 +515,7 @@ where
     let deq_fut = async move {
         let mut counter = 0;
         loop {
-            let deq_item = buffer.dequeue(shard_ind).await;
+            let deq_item = buffer.dequeue_in_shard(shard_ind).await;
             match deq_item {
                 Some(item) => {
                     f(item);
