@@ -94,8 +94,8 @@ async fn kanal_async(c: usize, task_count: usize) {
         handles.push(task::spawn(async move {
             for _ in 0..task_count {
                 for _ in 0..1 {
-                    let x: Message = rx.recv().await.unwrap();
-                    test_func(x.item_one as u128);
+                    let x = rx.recv().await.unwrap();
+                    // test_func(x as u128);
                 }
             }
         }));
@@ -103,10 +103,11 @@ async fn kanal_async(c: usize, task_count: usize) {
 
     for _ in 0..task_count {
         let tx = s.clone();
-        let msg = Message::default();
+        // let msg = Message::default();
         handles.push(task::spawn(async move {
             for i in 0..1 {
-                tx.send(msg).await.unwrap();
+                // tx.send(msg).await.unwrap();
+                tx.send(i).await.unwrap();
             }
         }));
     }
@@ -125,10 +126,11 @@ async fn kanal_async_with_msg_vec(
     let (s, r) = bounded_async(c);
     let mut handles = Vec::new();
 
-    for _ in 0..1 {
+    // for _ in 0..1 {
+    for _ in 0..8 {
         let rx = r.clone();
         handles.push(task::spawn(async move {
-            for _ in 0..task_count {
+            for _ in 0..task_count/8 {
                 for _ in 0..msg_count {
                     let x = rx.recv().await.unwrap();
                     // test_func(x.item_one as u128);
@@ -157,45 +159,6 @@ fn benchmark_kanal_async(c: &mut Criterion) {
     const MAX_THREADS: [usize; 1] = [8];
     const CAPACITY: usize = 128;
     const TASKS: [usize; 1] = [100000];
-    const MSG_COUNT: usize = 1;
-    let msg = BigData {
-        buf: Box::new([0; 8]),
-    };
-    let mut msg_vecs = Vec::with_capacity(TASKS[0]);
-    for _ in 0..TASKS[0] {
-        msg_vecs.push(Vec::with_capacity(MSG_COUNT));
-        let msg_vecs_len = msg_vecs.len();
-        for _ in 0..MSG_COUNT {
-            msg_vecs[msg_vecs_len - 1].push(msg.clone());
-        }
-    }
-
-    // for thread_num in MAX_THREADS {
-    //     let runtime = tokio::runtime::Builder::new_multi_thread()
-    //         .enable_all()
-    //         .worker_threads(thread_num)
-    //         .build()
-    //         .unwrap();
-
-    //     for task_count in TASKS {
-    //         let func_name = format!(
-    //             "Kanal Async: {} threads, {} enq tasks enqueuing 1 million items, 1 looping deq task",
-    //             thread_num, task_count
-    //         );
-
-    //         c.bench_with_input(
-    //             BenchmarkId::new(func_name, CAPACITY),
-    //             &(CAPACITY),
-    //             |b, &cap| {
-    //                 // Insert a call to `to_async` to convert the bencher to async mode.
-    //                 // The timing loops are the same as with the normal bencher.
-    //                 b.to_async(&runtime).iter(async || {
-    //                     kanal_async(cap, task_count).await;
-    //                 });
-    //             },
-    //         );
-    //     }
-    // }
 
     for thread_num in MAX_THREADS {
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -206,7 +169,8 @@ fn benchmark_kanal_async(c: &mut Criterion) {
 
         for task_count in TASKS {
             let func_name = format!(
-                "Kanal Async: {thread_num} threads, {task_count} enq tasks enqueuing 1 million items, 1 looping deq task"
+                "Kanal Async: {} threads, {} enq tasks enqueuing 1 million items, 1 looping deq task",
+                thread_num, task_count
             );
 
             c.bench_with_input(
@@ -215,25 +179,64 @@ fn benchmark_kanal_async(c: &mut Criterion) {
                 |b, &cap| {
                     // Insert a call to `to_async` to convert the bencher to async mode.
                     // The timing loops are the same as with the normal bencher.
-                    b.to_async(&runtime).iter_custom(|iters| {
-                        let msg_vecs = msg_vecs.clone();
-                        async move {
-                            let mut total = Duration::ZERO;
-                            for _ in 0..iters {
-                                let msg_vecs = msg_vecs.clone();
-                                let start = Instant::now();
-                                kanal_async_with_msg_vec(msg_vecs, cap, task_count, MSG_COUNT)
-                                    .await;
-                                let end = Instant::now();
-                                total += end - start;
-                            }
-                            total
-                        }
+                    b.to_async(&runtime).iter(async || {
+                        kanal_async(cap, task_count).await;
                     });
                 },
             );
         }
     }
+
+    // const MSG_COUNT: usize = 1;
+    // let msg = BigData {
+    //     buf: Box::new([0; 8]),
+    // };
+    // let mut msg_vecs = Vec::with_capacity(TASKS[0]);
+    // for _ in 0..TASKS[0] {
+    //     msg_vecs.push(Vec::with_capacity(MSG_COUNT));
+    //     let msg_vecs_len = msg_vecs.len();
+    //     for _ in 0..MSG_COUNT {
+    //         msg_vecs[msg_vecs_len - 1].push(msg.clone());
+    //     }
+    // }
+
+    // for thread_num in MAX_THREADS {
+    //     let runtime = tokio::runtime::Builder::new_multi_thread()
+    //         .enable_all()
+    //         .worker_threads(thread_num)
+    //         .build()
+    //         .unwrap();
+
+    //     for task_count in TASKS {
+    //         let func_name = format!(
+    //             "Kanal Async: {thread_num} threads, {task_count} enq tasks enqueuing 1 million items, 1 looping deq task"
+    //         );
+
+    //         c.bench_with_input(
+    //             BenchmarkId::new(func_name, CAPACITY),
+    //             &(CAPACITY),
+    //             |b, &cap| {
+    //                 // Insert a call to `to_async` to convert the bencher to async mode.
+    //                 // The timing loops are the same as with the normal bencher.
+    //                 b.to_async(&runtime).iter_custom(|iters| {
+    //                     let msg_vecs = msg_vecs.clone();
+    //                     async move {
+    //                         let mut total = Duration::ZERO;
+    //                         for _ in 0..iters {
+    //                             let msg_vecs = msg_vecs.clone();
+    //                             let start = Instant::now();
+    //                             kanal_async_with_msg_vec(msg_vecs, cap, task_count, MSG_COUNT)
+    //                                 .await;
+    //                             let end = Instant::now();
+    //                             total += end - start;
+    //                         }
+    //                         total
+    //                     }
+    //                 });
+    //             },
+    //         );
+    //     }
+    // }
 }
 
 criterion_group!(benches, benchmark_kanal_async);

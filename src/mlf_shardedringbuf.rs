@@ -36,10 +36,11 @@ pub struct MLFShardedRingBuf<T> {
     capacity: AtomicUsize,
     /// Multiple InnerRingBuffer structure based on num of shards
     /// CachePadded to prevent false sharing
-    inner_rb: Box<[CachePadded<InnerRingBuffer<T>>]>,
+    // inner_rb: Box<[CachePadded<InnerRingBuffer<T>>]>,
+    inner_rb: Box<[InnerRingBuffer<T>]>,
 
-    pub(crate) job_space_shard_notifs: Box<[Notify]>,
-    pub(crate) job_post_shard_notifs: Box<[Notify]>,
+    // pub(crate) job_space_shard_notifs: Box<[Notify]>,
+    // pub(crate) job_post_shard_notifs: Box<[Notify]>,
 }
 
 // An inner ring buffer to contain the items, enqueue and dequeue index for ShardedRingBuf struct
@@ -51,7 +52,8 @@ struct InnerRingBuffer<T> {
     /// Where to enqueue at in the Box
     enqueue_index: CachePadded<AtomicUsize>,
     /// Where to dequeue at in the Box
-    dequeue_index: AtomicUsize,
+    // dequeue_index: AtomicUsize,
+    dequeue_index: CachePadded<AtomicUsize>,
 }
 
 // An inner ring buffer to contain the items, enqueue and dequeue index for ShardedRingBuf struct
@@ -61,6 +63,8 @@ struct Slot<T> {
     item: UnsafeCell<MaybeUninit<Option<T>>>,
     /// 0: empty, 1: full, 2: in progress (deq), 3: in progress (enq)
     state: AtomicU8,
+    enq_notify: Notify,
+    deq_notify: Notify
 }
 
 /// Implements the Slot functions
@@ -70,6 +74,8 @@ impl<T> Slot<T> {
         Slot {
             item: UnsafeCell::new(MaybeUninit::uninit()),
             state: AtomicU8::new(0),
+            enq_notify: Notify::new(),
+            deq_notify: Notify::new()
         }
     }
 }
@@ -88,7 +94,8 @@ impl<T> InnerRingBuffer<T> {
                 vec.into_boxed_slice()
             },
             enqueue_index: CachePadded::new(AtomicUsize::new(0)),
-            dequeue_index: AtomicUsize::new(0),
+            // dequeue_index: AtomicUsize::new(0),
+            dequeue_index: CachePadded::new(AtomicUsize::new(0)),
         }
     }
 }
@@ -115,32 +122,36 @@ impl<T> MLFShardedRingBuf<T> {
                 let mut vec = Vec::with_capacity(shards);
                 for _ in 0..shards {
                     if remainder == 0 {
-                        vec.push(CachePadded::new(InnerRingBuffer::new(capacity_per_shard)));
+                        // vec.push(CachePadded::new(InnerRingBuffer::new(capacity_per_shard)));
+                        vec.push(InnerRingBuffer::new(capacity_per_shard));
                     } else {
-                        vec.push(CachePadded::new(InnerRingBuffer::new(
+                        // vec.push(CachePadded::new(InnerRingBuffer::new(
+                        //     capacity_per_shard + 1,
+                        // )));
+                        vec.push(InnerRingBuffer::new(
                             capacity_per_shard + 1,
-                        )));
+                        ));
                         remainder -= 1;
                     }
                 }
                 vec.into_boxed_slice()
             },
-            job_post_shard_notifs: {
-                let mut vec = Vec::with_capacity(shards);
-                for _ in 0..shards {
-                    vec.push(Notify::new());
-                }
-                vec.into_boxed_slice()
-            },
+            // job_post_shard_notifs: {
+            //     let mut vec = Vec::with_capacity(shards);
+            //     for _ in 0..shards {
+            //         vec.push(Notify::new());
+            //     }
+            //     vec.into_boxed_slice()
+            // },
 
-            job_space_shard_notifs: {
-                let mut vec = Vec::with_capacity(shards);
+            // job_space_shard_notifs: {
+            //     let mut vec = Vec::with_capacity(shards);
 
-                for _ in 0..shards {
-                    vec.push(Notify::new());
-                }
-                vec.into_boxed_slice()
-            },
+            //     for _ in 0..shards {
+            //         vec.push(Notify::new());
+            //     }
+            //     vec.into_boxed_slice()
+            // },
         }
     }
 
@@ -179,25 +190,11 @@ impl<T> MLFShardedRingBuf<T> {
         self.capacity.load(Ordering::Relaxed)
     }
 
-    async fn try_acquire_slot(&self, acquire: Acquire, shard_ind: usize) -> (usize, usize) {
-        loop {
-            let slot_taken = self.take_slot(acquire, shard_ind).await;
-            if let Some(slot) = slot_taken {
-                return slot;
-            }
-
-            if matches!(acquire, Acquire::Dequeue) {
-                self.job_post_shard_notifs[shard_ind].notified().await;
-            } else {
-                self.job_space_shard_notifs[shard_ind].notified().await;
-            }
-        }
-    }
-
-    async fn take_slot(&self, acquire: Acquire, shard_ind: usize) -> Option<(usize, usize)> {
+    #[inline]
+    async fn take_slot(&self, acquire: Acquire, shard_ind: usize) -> (usize, usize) {
         let inner = &self.inner_rb[shard_ind];
         if matches!(acquire, Acquire::Enqueue) {
-            let enq_ind = inner.enqueue_index.fetch_add(1, Ordering::AcqRel) % inner.items.len();
+            let enq_ind = inner.enqueue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
             loop {
                 let acquire_slot = inner.items[enq_ind].state.compare_exchange(
                     0,
@@ -206,19 +203,19 @@ impl<T> MLFShardedRingBuf<T> {
                     Ordering::Relaxed,
                 );
                 match acquire_slot {
-                    Ok(_) => return Some((shard_ind, enq_ind)),
+                    Ok(_) => return (shard_ind, enq_ind),
                     Err(actual) => {
                         if actual == 2 {
-                            self.job_space_shard_notifs[shard_ind].notified().await;
+                            inner.items[enq_ind].enq_notify.notified().await;
                         } else {
-                            self.job_post_shard_notifs[shard_ind].notify_one();
-                            self.job_space_shard_notifs[shard_ind].notified().await;
+                            inner.items[enq_ind].deq_notify.notify_one();
+                            inner.items[enq_ind].enq_notify.notified().await;
                         }
                     }
                 }
             }
         } else {
-            let deq_ind = inner.dequeue_index.fetch_add(1, Ordering::AcqRel) % inner.items.len();
+            let deq_ind = inner.dequeue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
             loop {
                 let acquire_slot = inner.items[deq_ind].state.compare_exchange(
                     1,
@@ -227,13 +224,13 @@ impl<T> MLFShardedRingBuf<T> {
                     Ordering::Relaxed,
                 );
                 match acquire_slot {
-                    Ok(_) => return Some((shard_ind, deq_ind)),
+                    Ok(_) => return (shard_ind, deq_ind),
                     Err(actual) => {
                         if actual == 3 {
-                            self.job_post_shard_notifs[shard_ind].notified().await;
+                            inner.items[deq_ind].deq_notify.notified().await;
                         } else {
-                            self.job_space_shard_notifs[shard_ind].notify_one();
-                            self.job_post_shard_notifs[shard_ind].notified().await;
+                            inner.items[deq_ind].enq_notify.notify_one();
+                            inner.items[deq_ind].deq_notify.notified().await;
                         }
                     }
                 }
@@ -247,11 +244,11 @@ impl<T> MLFShardedRingBuf<T> {
         match acquire {
             Acquire::Dequeue => {
                 inner.items[slot_ind].state.store(0, Ordering::Relaxed);
-                self.job_space_shard_notifs[shard_ind].notify_one();
+                inner.items[slot_ind].enq_notify.notify_one();
             }
             Acquire::Enqueue => {
                 inner.items[slot_ind].state.store(1, Ordering::Relaxed);
-                self.job_post_shard_notifs[shard_ind].notify_one();
+                inner.items[slot_ind].deq_notify.notify_one();
             }
         }
     }
@@ -278,7 +275,7 @@ impl<T> MLFShardedRingBuf<T> {
     #[inline(always)]
     async fn enqueue_item(&self, item: Option<T>, shard_ind: usize) {
         // acquire shard
-        let current = self.try_acquire_slot(Acquire::Enqueue, shard_ind).await;
+        let current = self.take_slot(Acquire::Enqueue, shard_ind).await;
         self.enqueue_in_slot(current.0, current.1, item);
         self.release_slot(current.0, current.1, Acquire::Enqueue);
     }
@@ -316,7 +313,7 @@ impl<T> MLFShardedRingBuf<T> {
     #[inline(always)]
     pub(crate) async fn dequeue(&self, shard_ind: usize) -> Option<T> {
         let shard_ind = shard_ind % self.get_num_of_shards();
-        let current = self.try_acquire_slot(Acquire::Dequeue, shard_ind).await;
+        let current = self.take_slot(Acquire::Dequeue, shard_ind).await;
         let item = self.dequeue_in_slot(current.0, current.1);
         self.release_slot(current.0, current.1, Acquire::Dequeue);
         item
@@ -336,29 +333,9 @@ impl<T> MLFShardedRingBuf<T> {
             shard_ind < self.get_num_of_shards(),
             "Shard index must be within the number of shards that exist"
         );
-        // let inner = &self.inner_rb[shard_ind];
-        // let enq_ind = (inner.enqueue_index.fetch_add(1, Ordering::AcqRel)) % inner.items.len();
-        // self.enqueue_in_slot(shard_ind, enq_ind, None);
-        // inner.items[enq_ind].state.store(1, Ordering::Relaxed);
         let slot = self.take_slot(Acquire::Enqueue, shard_ind).await;
-        if let Some(slot) = slot {
-            self.enqueue_in_slot(slot.0, slot.1, None);
-            self.release_slot(slot.0, slot.1, Acquire::Enqueue);
-        }
-    }
-
-    /// Notifies one dequeuer task assigned to each shard.
-    ///
-    /// Time Complexity: O(s) where s is the number of shards
-    ///
-    /// Space Complexity: O(1)
-    #[inline(always)]
-    pub fn notify_pin_shard(&self, shard_ind: usize) {
-        assert!(
-            shard_ind < self.get_num_of_shards(),
-            "Shard index must be within the number of shards that exist"
-        );
-        self.job_post_shard_notifs[shard_ind].notify_one();
+        self.enqueue_in_slot(slot.0, slot.1, None);
+        self.release_slot(slot.0, slot.1, Acquire::Enqueue);
     }
 
     /// Clears the buffer back to an empty state
