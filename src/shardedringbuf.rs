@@ -88,21 +88,21 @@ impl<T> InnerRingBuffer<T> {
         }
     }
 
-    /// Helper function to see if a given index inside this buffer does
-    /// indeed contain a valid item. Used in Drop Trait.
-    #[inline(always)]
-    fn is_item_in_shard(&self, item_ind: usize) -> bool {
-        let enqueue_ind = self.enqueue_index.load(Ordering::Relaxed) % self.items.len();
-        let dequeue_ind = self.dequeue_index.load(Ordering::Relaxed) % self.items.len();
+    // /// Helper function to see if a given index inside this buffer does
+    // /// indeed contain a valid item. Used in Drop Trait.
+    // #[inline(always)]
+    // fn is_item_in_shard(&self, item_ind: usize) -> bool {
+    //     let enqueue_ind = self.enqueue_index.load(Ordering::Relaxed) % self.items.len();
+    //     let dequeue_ind = self.dequeue_index.load(Ordering::Relaxed) % self.items.len();
 
-        if enqueue_ind > dequeue_ind {
-            item_ind < enqueue_ind && item_ind >= dequeue_ind
-        } else if enqueue_ind < dequeue_ind {
-            item_ind >= dequeue_ind || item_ind < enqueue_ind
-        } else {
-            false
-        }
-    }
+    //     if enqueue_ind > dequeue_ind {
+    //         item_ind < enqueue_ind && item_ind >= dequeue_ind
+    //     } else if enqueue_ind < dequeue_ind {
+    //         item_ind >= dequeue_ind || item_ind < enqueue_ind
+    //     } else {
+    //         false
+    //     }
+    // }
 }
 
 impl<T> ShardedRingBuf<T> {

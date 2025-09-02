@@ -173,19 +173,19 @@ async fn mlfsrb_pin(capacity: usize, shards: usize, task_count: usize) {
     let mut deq_tasks = Vec::with_capacity(shards);
     let mut enq_tasks = Vec::with_capacity(task_count);
 
-    let notifier_task = spawn({
-        let rb_clone = rb.clone();
-        async move {
-            // let rb = rb.clone();
-            loop {
-                for i in 0..shards {
-                    // sleep(Duration::from_nanos(50));
-                    rb_clone.notify_pin_shard(i % rb_clone.get_num_of_shards());
-                }
-                yield_now().await;
-            }
-        }
-    });
+    // let notifier_task = spawn({
+    //     let rb_clone = rb.clone();
+    //     async move {
+    //         // let rb = rb.clone();
+    //         loop {
+    //             for i in 0..shards {
+    //                 // sleep(Duration::from_nanos(50));
+    //                 rb_clone.notify_pin_shard(i % rb_clone.get_num_of_shards());
+    //             }
+    //             yield_now().await;
+    //         }
+    //     }
+    // });
     // spawn enq tasks with pin policy
     // for i in 0..task_count {
     //     let handle = spawn_enqueuer_with_iterator(
@@ -195,15 +195,44 @@ async fn mlfsrb_pin(capacity: usize, shards: usize, task_count: usize) {
     //     );
     //     enq_tasks.push(handle);
     // }
+    // for i in 0..task_count {
+    //     let handle = mlf_spawn_enqueuer_with_iterator(rb.clone(), i, 0..1);
+    //     enq_tasks.push(handle);
+    // }
+
+    // for i in 0..shards {
+    //     let handle = mlf_spawn_dequeuer_unbounded(rb.clone(), i, |x| {
+    //         // test_func(x as u128);
+    //         // println!("{:?}", x);
+    //     });
+    //     deq_tasks.push(handle);
+    // }
+
     for i in 0..task_count {
-        let handle = mlf_spawn_enqueuer_with_iterator(rb.clone(), i, 0..100);
+        let handle = tokio::spawn({
+            let rb_clone = rb.clone();
+            async move {
+                rb_clone.enqueue(i).await;
+            }
+        });
         enq_tasks.push(handle);
     }
 
     for i in 0..shards {
-        let handle = mlf_spawn_dequeuer_unbounded(rb.clone(), i, |x| {
-            test_func(x as u128);
-            // println!("{:?}", x);
+        let handle = tokio::spawn({
+            let rb_clone = rb.clone();
+            async move {
+                loop {
+                    // let item = rb_clone.dequeue().await;
+                    let item = rb_clone.dequeue_in_shard(i).await;
+                    match item {
+                        None => break,
+                        Some(val) => {
+                            
+                        }
+                    }
+                }
+            }
         });
         deq_tasks.push(handle);
     }
@@ -227,7 +256,7 @@ async fn mlfsrb_pin(capacity: usize, shards: usize, task_count: usize) {
         deq.await.unwrap();
     }
 
-    notifier_task.abort();
+    // notifier_task.abort();
 }
 
 async fn lfsrb_pin_deq_full(capacity: usize, shards: usize, task_count: usize) {
@@ -483,39 +512,7 @@ async fn mlfsrb_pin_with_msg_vec(
     let mut deq_tasks = Vec::with_capacity(shards);
     let mut enq_tasks = Vec::with_capacity(task_count);
 
-    // let notifier_task = spawn({
-    //     let rb_clone = rb.clone();
-    //     async move {
-    //         // let rb = rb.clone();
-    //         loop {
-    //             for i in 0..shards {
-    //                 // println!("doing stuff at shard {}", i);
-    //                 // sleep(Duration::from_nanos(50));
-    //                 rb_clone.notify_pin_shard(i % rb_clone.get_num_of_shards());
-    //             }
-    //             yield_now().await;
-    //         }
-    //     }
-    // });
-    // let notifier_thread = thread::spawn(move || {
-    //     // let message = "Hello from a standard thread!";
-    //     // println!("{}", message);
-    //     // // Can't use await here, use a regular send
-    //     // tx.blocking_send(message).expect("Failed to send message");
-    //     // let rb_clone = rb.clone();
-    //     loop {
-    //         if rb_clone.assigner_terminate.load(std::sync::atomic::Ordering::Relaxed) {
-    //             break;
-    //         }
-    //         for i in 0..shards {
-    //             rb_clone.notify_pin_shard(i % rb_clone.get_num_of_shards());
-    //         }
-    //         sleep(Duration::from_nanos(500));
-    //     }
-    // });
-
     // spawn enq tasks with pin policy
-    // for i in 0..task_count {
     let mut counter = 0;
 
     for msg_vec in msg_vecs {
@@ -548,14 +545,6 @@ async fn mlfsrb_pin_with_msg_vec(
         deq_tasks.push(handle);
     }
 
-    // for i in 0..16 {
-    //     let handle =
-    //         spawn_dequeuer(rb.clone(), ShardPolicy::Pin { initial_index: i }, |x| {
-    //             test_add(*x);
-    //         });
-    //     deq_tasks.push(handle);
-    // }
-
     // Wait for enqueuers
     for enq in enq_tasks {
         // println!("here");
@@ -575,20 +564,17 @@ async fn mlfsrb_pin_with_msg_vec(
     for deq in deq_tasks {
         deq.await.unwrap();
     }
-    // notifier_task.abort();
-    // terminate_assigner(rb.clone());
-    // notifier_thread.join();
 }
 
 fn benchmark_pin(c: &mut Criterion) {
     // const MAX_THREADS: [usize; 2] = [4, 8];
     const MAX_THREADS: [usize; 1] = [8];
-    const CAPACITY: usize = 1;
+    const CAPACITY: usize = 128;
     // const CAPACITY: usize = 200000;
     // const SHARDS: [usize; 5] = [1, 2, 4, 8, 16];
     // const TASKS: [usize; 5] = [1, 2, 4, 8, 16];
     const SHARDS: [usize; 1] = [1];
-    const TASKS: [usize; 1] = [1000];
+    const TASKS: [usize; 1] = [100];
 
     // const MSG_COUNT: usize = 250000;
     // // let msg = BigData { buf: Box::new([0; 1 * 1024]) };
