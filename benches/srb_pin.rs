@@ -544,7 +544,7 @@ fn benchmark_pin(c: &mut Criterion) {
     // const CAPACITY: usize = 200000;
     // const SHARDS: [usize; 5] = [1, 2, 4, 8, 16];
     // const TASKS: [usize; 5] = [1, 2, 4, 8, 16];
-    const SHARDS: [usize; 1] = [8];
+    const SHARDS: [usize; 1] = [1];
     const TASKS: [usize; 1] = [100000];
 
     // const MSG_COUNT: usize = 250000;
