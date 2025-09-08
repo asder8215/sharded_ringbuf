@@ -1,10 +1,10 @@
 use criterion::async_executor::AsyncExecutor;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use sharded_ringbuf::{ExpShardedRingBuf, spawn_dequeuer_unbounded, spawn_enqueuer_with_iterator};
 use sharded_ringbuf::{
     MLFShardedRingBuf, ShardPolicy, mlf_spawn_dequeuer_unbounded, mlf_spawn_enqueuer_with_iterator,
     spawn_dequeuer_full_unbounded, spawn_enqueuer_full_with_iterator,
 };
-use sharded_ringbuf::{ShardedRingBuf, spawn_dequeuer_unbounded, spawn_enqueuer_with_iterator};
 use smol::future;
 use std::future::Future;
 use std::sync::Arc;
@@ -93,24 +93,15 @@ fn mul_stress(iter: usize) -> u128 {
     acc
 }
 
-/// Minimal executor adapter so Criterion can call smol::block_on
-#[derive(Clone, Copy)]
-struct SmolExecutor;
-
-impl AsyncExecutor for SmolExecutor {
-    fn block_on<T>(&self, future: impl Future<Output = T>) -> T {
-        future::block_on(future)
-    }
-}
-
 async fn lfsrb_pin(capacity: usize, shards: usize, task_count: usize) {
     let max_items: usize = capacity;
 
-    let rb = Arc::new(ShardedRingBuf::new(max_items, shards));
+    let rb = Arc::new(ExpShardedRingBuf::new(max_items, shards));
 
     let mut deq_tasks = Vec::with_capacity(shards);
     let mut enq_tasks = Vec::with_capacity(task_count);
 
+    // necessary for poison
     let notifier_task = spawn({
         let rb_clone = rb.clone();
         async move {
@@ -133,18 +124,35 @@ async fn lfsrb_pin(capacity: usize, shards: usize, task_count: usize) {
     //     );
     //     enq_tasks.push(handle);
     // }
+    // for i in 0..task_count {
+    //     let handle = spawn_enqueuer_with_iterator(
+    //         rb.clone(),
+    //         ShardPolicy::Pin { initial_index: i },
+    //         0..250000,
+    //     );
+    //     enq_tasks.push(handle);
+    // }
+
     for i in 0..task_count {
-        let handle = spawn_enqueuer_with_iterator(
+        let handle = spawn_enqueuer_full_with_iterator(
             rb.clone(),
             ShardPolicy::Pin { initial_index: i },
-            0..=250000,
+            0..250000,
         );
         enq_tasks.push(handle);
     }
 
-    for i in 0..shards {
+    // for i in 0..task_count {
+    //     let handle =
+    //         spawn_dequeuer_unbounded(rb.clone(), ShardPolicy::Pin { initial_index: i }, |x| {
+    //             // test_func(x as u128);
+    //         });
+    //     deq_tasks.push(handle);
+    // }
+
+    for i in 0..task_count {
         let handle =
-            spawn_dequeuer_unbounded(rb.clone(), ShardPolicy::Pin { initial_index: i }, |x| {
+            spawn_dequeuer_full_unbounded(rb.clone(), ShardPolicy::Pin { initial_index: i }, |x| {
                 // test_func(x as u128);
             });
         deq_tasks.push(handle);
@@ -212,13 +220,15 @@ async fn mlfsrb_pin(capacity: usize, shards: usize, task_count: usize) {
         let handle = tokio::spawn({
             let rb_clone = rb.clone();
             async move {
-                rb_clone.enqueue(i).await;
+                for j in 0..250000 {
+                    rb_clone.enqueue(j).await;
+                }
             }
         });
         enq_tasks.push(handle);
     }
 
-    for i in 0..shards {
+    for i in 0..task_count {
         let handle = tokio::spawn({
             let rb_clone = rb.clone();
             async move {
@@ -227,9 +237,7 @@ async fn mlfsrb_pin(capacity: usize, shards: usize, task_count: usize) {
                     let item = rb_clone.dequeue_in_shard(i).await;
                     match item {
                         None => break,
-                        Some(val) => {
-                            
-                        }
+                        Some(val) => {}
                     }
                 }
             }
@@ -242,7 +250,7 @@ async fn mlfsrb_pin(capacity: usize, shards: usize, task_count: usize) {
         enq.await.unwrap();
     }
 
-    for i in 0..shards {
+    for i in 0..task_count {
         {
             let rb = rb.clone();
             spawn(async move {
@@ -262,7 +270,7 @@ async fn mlfsrb_pin(capacity: usize, shards: usize, task_count: usize) {
 async fn lfsrb_pin_deq_full(capacity: usize, shards: usize, task_count: usize) {
     let max_items: usize = capacity;
 
-    let rb = Arc::new(ShardedRingBuf::new(max_items, shards));
+    let rb = Arc::new(ExpShardedRingBuf::new(max_items, shards));
 
     let mut deq_tasks = Vec::with_capacity(shards);
     let mut enq_tasks = Vec::with_capacity(task_count);
@@ -380,7 +388,7 @@ async fn lfsrb_pin_with_msg_vec(
 ) {
     let max_items: usize = capacity;
 
-    let rb = Arc::new(ShardedRingBuf::new(max_items, shards));
+    let rb = Arc::new(ExpShardedRingBuf::new(max_items, shards));
 
     let mut deq_tasks = Vec::with_capacity(shards);
     let mut enq_tasks = Vec::with_capacity(task_count);
@@ -568,13 +576,13 @@ async fn mlfsrb_pin_with_msg_vec(
 
 fn benchmark_pin(c: &mut Criterion) {
     // const MAX_THREADS: [usize; 2] = [4, 8];
-    const MAX_THREADS: [usize; 1] = [8];
-    const CAPACITY: usize = 128;
+    const MAX_THREADS: [usize; 1] = [4];
+    const CAPACITY: usize = 1000000;
     // const CAPACITY: usize = 200000;
     // const SHARDS: [usize; 5] = [1, 2, 4, 8, 16];
     // const TASKS: [usize; 5] = [1, 2, 4, 8, 16];
-    const SHARDS: [usize; 1] = [1];
-    const TASKS: [usize; 1] = [100];
+    const SHARDS: [usize; 1] = [4];
+    const TASKS: [usize; 1] = [4];
 
     // const MSG_COUNT: usize = 250000;
     // // let msg = BigData { buf: Box::new([0; 1 * 1024]) };
@@ -590,34 +598,34 @@ fn benchmark_pin(c: &mut Criterion) {
     //     }
     // }
 
-    // for thread_num in MAX_THREADS {
-    //     let runtime = tokio::runtime::Builder::new_multi_thread()
-    //         .enable_all()
-    //         .worker_threads(thread_num)
-    //         .build()
-    //         .unwrap();
+    for thread_num in MAX_THREADS {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .worker_threads(thread_num)
+            .build()
+            .unwrap();
 
-    //     for shard_num in SHARDS {
-    //         for task_count in TASKS {
-    //             let func_name = format!(
-    //                 "Pin: {} threads, {} shards, {} enq tasks enqueuing 1 million items, {} looping deq task",
-    //                 thread_num, shard_num, task_count, shard_num
-    //             );
+        for shard_num in SHARDS {
+            for task_count in TASKS {
+                let func_name = format!(
+                    "Pin: {} threads, {} shards, {} enq tasks enqueuing 1 million items, {} looping deq task",
+                    thread_num, shard_num, task_count, shard_num
+                );
 
-    //             c.bench_with_input(
-    //                 BenchmarkId::new(func_name, CAPACITY),
-    //                 &(CAPACITY),
-    //                 |b, &cap| {
-    //                     // Insert a call to `to_async` to convert the bencher to async mode.
-    //                     // The timing loops are the same as with the normal bencher.
-    //                     b.to_async(&runtime).iter(async || {
-    //                         lfsrb_pin(cap, shard_num, task_count).await;
-    //                     });
-    //                 },
-    //             );
-    //         }
-    //     }
-    // }
+                c.bench_with_input(
+                    BenchmarkId::new(func_name, CAPACITY),
+                    &(CAPACITY),
+                    |b, &cap| {
+                        // Insert a call to `to_async` to convert the bencher to async mode.
+                        // The timing loops are the same as with the normal bencher.
+                        b.to_async(&runtime).iter(async || {
+                            lfsrb_pin(cap, shard_num, task_count).await;
+                        });
+                    },
+                );
+            }
+        }
+    }
 
     // for thread_num in MAX_THREADS {
     //     let runtime = tokio::runtime::Builder::new_multi_thread()

@@ -19,9 +19,8 @@ documentation = "https://docs.rs/sharded_ringbuf/latest/sharded_ringbuf/"
 async-executor = "1.13.3"
 crossbeam-utils = "^0.8.21"
 fastrand = "^2.3.0"
-futures-util = "0.3.31"
-smol = "2.0.2"
 tokio = {version = "^1.45.1", features = ["rt", "sync"] }
+futures-util = "0.3.31"
 
 [dev-dependencies]
 criterion = {version = "^0.6.0", features =["async_tokio"] }
@@ -30,6 +29,7 @@ kanal = "^0.1.1"
 async-channel = "2.5.0"
 crossbeam = "0.8"
 flume = {version="0.11", features= ["async"] }
+smol = "2.0.2"
 
 [[bench]]
 name = "srb_shiftby"

@@ -28,6 +28,7 @@
 //! thread simply context switches the task (putting it to the back of its queue) and tries working
 //! on a different task that likely operates on a different shard.
 
+mod exp_shardedringbuf;
 mod guards;
 mod mlf_shardedringbuf;
 mod shard_policies;
@@ -36,6 +37,7 @@ mod task_local_spawn;
 mod task_locals;
 mod task_node;
 
+pub use exp_shardedringbuf::ExpShardedRingBuf;
 pub use mlf_shardedringbuf::MLFShardedRingBuf;
 pub use shard_policies::ShardPolicy;
 pub use shardedringbuf::ShardedRingBuf;
