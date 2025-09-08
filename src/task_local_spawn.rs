@@ -1,5 +1,5 @@
 use crate::{
-    MLFShardedRingBuf, ShardPolicy, ShardedRingBuf,
+    ExpShardedRingBuf, MLFShardedRingBuf, ShardPolicy,
     guards::TaskDoneGuard,
     shard_policies::ShardPolicyKind,
     task_locals::{
@@ -17,12 +17,12 @@ use std::{
 use tokio::task::{JoinHandle, spawn, yield_now};
 
 /// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
-/// context for the purpose of enqueuing a single item onto a `ShardedRingBuf<T>`.
+/// context for the purpose of enqueuing a single item onto a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// enqueue operations that occurred.
 pub fn spawn_enqueuer<T>(
-    buffer: Arc<ShardedRingBuf<T>>,
+    buffer: Arc<ExpShardedRingBuf<T>>,
     policy: ShardPolicy,
     item: T,
 ) -> JoinHandle<usize>
@@ -88,12 +88,12 @@ where
 }
 
 /// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
-/// context for the purpose of enqueuing items through an iterator onto a `ShardedRingBuf<T>`.
+/// context for the purpose of enqueuing items through an iterator onto a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// enqueue operations that occurred.
 pub fn spawn_enqueuer_with_iterator<T, I>(
-    buffer: Arc<ShardedRingBuf<T>>,
+    buffer: Arc<ExpShardedRingBuf<T>>,
     policy: ShardPolicy,
     items: I,
 ) -> JoinHandle<usize>
@@ -118,8 +118,8 @@ where
             } => {}
             ShardPolicy::Pin { initial_index } => {
                 // println!("I completed work as a Enqueuer and need to notify Deq");
-                buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()]
-                    .notify_one();
+                // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()]
+                //     .notify_one();
                 // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_waiters();
             }
         };
@@ -162,7 +162,7 @@ where
 }
 
 /// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
-/// context for the purpose of enqueuing items through an iterator onto a `ShardedRingBuf<T>`.
+/// context for the purpose of enqueuing items through an iterator onto a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// enqueue operations that occurred.
@@ -224,12 +224,12 @@ where
 }
 
 /// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
-/// context for the purpose of enqueuing items through a stream onto a `ShardedRingBuf<T>`.
+/// context for the purpose of enqueuing items through a stream onto a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// enqueue operations that occurred.
 pub fn spawn_enqueuer_with_stream<T, S>(
-    buffer: Arc<ShardedRingBuf<T>>,
+    buffer: Arc<ExpShardedRingBuf<T>>,
     policy: ShardPolicy,
     stream: S,
 ) -> JoinHandle<usize>
@@ -282,12 +282,12 @@ where
 }
 
 /// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
-/// context for the purpose of dequeuing a single item from a `ShardedRingBuf<T>`.
+/// context for the purpose of dequeuing a single item from a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// dequeue operations that occurred.
 pub fn spawn_dequeuer<T, F>(
-    buffer: Arc<ShardedRingBuf<T>>,
+    buffer: Arc<ExpShardedRingBuf<T>>,
     policy: ShardPolicy,
     f: F,
 ) -> JoinHandle<usize>
@@ -355,12 +355,12 @@ where
 }
 
 /// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
-/// context for the purpose of dequeuing `count` number of items from a `ShardedRingBuf<T>`.
+/// context for the purpose of dequeuing `count` number of items from a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// dequeue operations that occurred.
 pub fn spawn_dequeuer_bounded<T, F>(
-    buffer: Arc<ShardedRingBuf<T>>,
+    buffer: Arc<ExpShardedRingBuf<T>>,
     policy: ShardPolicy,
     count: usize,
     f: F,
@@ -433,12 +433,12 @@ where
 }
 
 /// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
-/// context for the purpose of dequeuing items an unbounded number of times from a `ShardedRingBuf<T>`.
+/// context for the purpose of dequeuing items an unbounded number of times from a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// dequeue operations that occurred.
 pub fn spawn_dequeuer_unbounded<T, F>(
-    buffer: Arc<ShardedRingBuf<T>>,
+    buffer: Arc<ExpShardedRingBuf<T>>,
     policy: ShardPolicy,
     f: F,
 ) -> JoinHandle<usize>
@@ -498,7 +498,7 @@ where
 }
 
 /// Spawns a Tokio task with a provided shard index using the current Tokio runtime
-/// context for the purpose of dequeuing items an unbounded number of times from a `ShardedRingBuf<T>`.
+/// context for the purpose of dequeuing items an unbounded number of times from a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// dequeue operations that occurred.
@@ -531,12 +531,12 @@ where
 }
 
 /// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
-/// context for the purpose of dequeuing items from a shard fully a single time from a `ShardedRingBuf<T>`.
+/// context for the purpose of dequeuing items from a shard fully a single time from a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// dequeue full operations that occurred.
 pub fn spawn_dequeuer_full<T, F>(
-    buffer: Arc<ShardedRingBuf<T>>,
+    buffer: Arc<ExpShardedRingBuf<T>>,
     policy: ShardPolicy,
     f: F,
 ) -> JoinHandle<usize>
@@ -591,12 +591,12 @@ where
 }
 
 /// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
-/// context for the purpose of dequeuing items from a shard fully `count` number of times from a `ShardedRingBuf<T>`.
+/// context for the purpose of dequeuing items from a shard fully `count` number of times from a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// dequeue full operations that occurred.
 pub fn spawn_dequeuer_full_bounded<T, F>(
-    buffer: Arc<ShardedRingBuf<T>>,
+    buffer: Arc<ExpShardedRingBuf<T>>,
     policy: ShardPolicy,
     count: usize,
     f: F,
@@ -659,12 +659,12 @@ where
 }
 
 /// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
-/// context for the purpose of dequeuing items from a shard fully `count` number of times from a `ShardedRingBuf<T>`.
+/// context for the purpose of dequeuing items from a shard fully `count` number of times from a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// dequeue full operations that occurred.
 pub fn spawn_enqueuer_full_with_iterator<T, I>(
-    buffer: Arc<ShardedRingBuf<T>>,
+    buffer: Arc<ExpShardedRingBuf<T>>,
     policy: ShardPolicy,
     items: I,
 ) -> JoinHandle<usize>
@@ -705,8 +705,8 @@ where
             } => todo!(),
             ShardPolicy::Pin { initial_index } => {
                 // println!("I completed work as a Enqueuer and need to notify Deq");
-                buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()]
-                    .notify_one();
+                // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()]
+                //     .notify_one();
                 // buffer.job_post_shard_notifs[initial_index % buffer.get_num_of_shards()].notify_waiters();
             }
         }
@@ -749,12 +749,12 @@ where
 }
 
 /// Spawns a Tokio task with a provided `ShardPolicy` using the current Tokio runtime
-/// context for the purpose of dequeuing items from a shard fully an unbounded number of times from a `ShardedRingBuf<T>`.
+/// context for the purpose of dequeuing items from a shard fully an unbounded number of times from a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// dequeue full operations that occurred.
 pub fn spawn_dequeuer_full_unbounded<T, F>(
-    buffer: Arc<ShardedRingBuf<T>>,
+    buffer: Arc<ExpShardedRingBuf<T>>,
     policy: ShardPolicy,
     f: F,
 ) -> JoinHandle<usize>
@@ -815,7 +815,7 @@ where
 }
 
 /// Spawns a Tokio task with the CFT (Completely Fair Tasks) policy using the current Tokio runtime
-/// context for the purpose of enqueuing a single item onto a `ShardedRingBuf<T>`.
+/// context for the purpose of enqueuing a single item onto a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// enqueue operations that occurred.
@@ -829,7 +829,7 @@ where
 ///       re-pin dequeuer once the dequeuer completely empties the shard and it is not paired with
 ///       an enqueuer. If you really want to use more infinite looping enqueuers than dequeuers, then
 ///       use only {# of infinite looping dequeuers} shards.
-pub fn cft_spawn_enqueuer<T>(buffer: Arc<ShardedRingBuf<T>>, item: T) -> JoinHandle<usize>
+pub fn cft_spawn_enqueuer<T>(buffer: Arc<ExpShardedRingBuf<T>>, item: T) -> JoinHandle<usize>
 where
     T: Send + 'static,
 {
@@ -903,7 +903,7 @@ where
 }
 
 /// Spawns a Tokio task with the CFT (Completely Fair Tasks) policy using the current Tokio runtime
-/// context for the purpose of enqueuing items through an iterator onto a `ShardedRingBuf<T>`.
+/// context for the purpose of enqueuing items through an iterator onto a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// enqueue operations that occurred.
@@ -918,7 +918,7 @@ where
 ///       an enqueuer. If you really want to use more infinite looping enqueuers than dequeuers, then
 ///       use only {# of infinite looping dequeuers} shards.
 pub fn cft_spawn_enqueuer_with_iterator<T, I>(
-    buffer: Arc<ShardedRingBuf<T>>,
+    buffer: Arc<ExpShardedRingBuf<T>>,
     items: I,
 ) -> JoinHandle<usize>
 where
@@ -998,7 +998,7 @@ where
 }
 
 /// Spawns a Tokio task with the CFT (Completely Fair Tasks) policy using the current Tokio runtime
-/// context for the purpose of enqueuing items through a stream onto a `ShardedRingBuf<T>`.
+/// context for the purpose of enqueuing items through a stream onto a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// enqueue operations that occurred.
@@ -1013,7 +1013,7 @@ where
 ///       an enqueuer. If you really want to use more infinite looping enqueuers than dequeuers, then
 ///       use only {# of infinite looping dequeuers} shards.
 pub fn cft_spawn_enqueuer_with_stream<T, S>(
-    buffer: Arc<ShardedRingBuf<T>>,
+    buffer: Arc<ExpShardedRingBuf<T>>,
     stream: S,
 ) -> JoinHandle<usize>
 where
@@ -1093,7 +1093,7 @@ where
 }
 
 /// Spawns a Tokio task with the CFT (Completely Fair Tasks) policy using the current Tokio runtime
-/// context for the purpose of dequeuing a single item from a `ShardedRingBuf<T>`.
+/// context for the purpose of dequeuing a single item from a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// dequeue operations that occurred.
@@ -1107,7 +1107,7 @@ where
 ///       re-pin dequeuer once the dequeuer completely empties the shard and it is not paired with
 ///       an enqueuer. If you really want to use more infinite looping enqueuers than dequeuers, then
 ///       use only {# of infinite looping dequeuers} shards.
-pub fn cft_spawn_dequeuer<T, F>(buffer: Arc<ShardedRingBuf<T>>, f: F) -> JoinHandle<usize>
+pub fn cft_spawn_dequeuer<T, F>(buffer: Arc<ExpShardedRingBuf<T>>, f: F) -> JoinHandle<usize>
 where
     F: Fn(T) + Send + 'static,
     T: Send + 'static,
@@ -1186,7 +1186,7 @@ where
 }
 
 /// Spawns a Tokio task with the CFT (Completely Fair Tasks) policy using the current Tokio runtime
-/// context for the purpose of dequeuing `count` number of items from a `ShardedRingBuf<T>`.
+/// context for the purpose of dequeuing `count` number of items from a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// dequeue operations that occurred.
@@ -1201,7 +1201,7 @@ where
 ///       an enqueuer. If you really want to use more infinite looping enqueuers than dequeuers, then
 ///       use only {# of infinite looping dequeuers} shards.
 pub fn cft_spawn_dequeuer_bounded<T, F>(
-    buffer: Arc<ShardedRingBuf<T>>,
+    buffer: Arc<ExpShardedRingBuf<T>>,
     count: usize,
     f: F,
 ) -> JoinHandle<usize>
@@ -1287,7 +1287,7 @@ where
 }
 
 /// Spawns a Tokio task with the CFT (Completely Fair Tasks) policy using the current Tokio runtime
-/// context for the purpose of dequeuing items an unbounded number of times from a `ShardedRingBuf<T>`.
+/// context for the purpose of dequeuing items an unbounded number of times from a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// dequeue operations that occurred.
@@ -1301,7 +1301,10 @@ where
 ///       re-pin dequeuer once the dequeuer completely empties the shard and it is not paired with
 ///       an enqueuer. If you really want to use more infinite looping enqueuers than dequeuers, then
 ///       use only {# of infinite looping dequeuers} shards.
-pub fn cft_spawn_dequeuer_unbounded<T, F>(buffer: Arc<ShardedRingBuf<T>>, f: F) -> JoinHandle<usize>
+pub fn cft_spawn_dequeuer_unbounded<T, F>(
+    buffer: Arc<ExpShardedRingBuf<T>>,
+    f: F,
+) -> JoinHandle<usize>
 where
     F: Fn(T) + Send + 'static,
     T: Send + 'static,
@@ -1384,7 +1387,7 @@ where
 }
 
 /// Spawns a Tokio task with the CFT (Completely Fair Tasks) policy using the current Tokio runtime
-/// context for the purpose of dequeuing items from a shard fully a single time from a `ShardedRingBuf<T>`.
+/// context for the purpose of dequeuing items from a shard fully a single time from a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// dequeue full operations that occurred.
@@ -1398,7 +1401,7 @@ where
 ///       re-pin dequeuer once the dequeuer completely empties the shard and it is not paired with
 ///       an enqueuer. If you really want to use more infinite looping enqueuers than dequeuers, then
 ///       use only {# of infinite looping dequeuers} shards.
-pub fn cft_spawn_dequeuer_full<T, F>(buffer: Arc<ShardedRingBuf<T>>, f: F) -> JoinHandle<usize>
+pub fn cft_spawn_dequeuer_full<T, F>(buffer: Arc<ExpShardedRingBuf<T>>, f: F) -> JoinHandle<usize>
 where
     F: Fn(T) + Send + 'static,
     T: Send + 'static,
@@ -1479,7 +1482,7 @@ where
 }
 
 /// Spawns a Tokio task with the CFT (Completely Fair Tasks) policy using the current Tokio runtime
-/// context for the purpose of dequeuing items from a shard fully `count` number of times from a `ShardedRingBuf<T>`.
+/// context for the purpose of dequeuing items from a shard fully `count` number of times from a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// dequeue full operations that occurred.
@@ -1494,7 +1497,7 @@ where
 ///       an enqueuer. If you really want to use more infinite looping enqueuers than dequeuers, then
 ///       use only {# of infinite looping dequeuers} shards.
 pub fn cft_spawn_dequeuer_full_bounded<T, F>(
-    buffer: Arc<ShardedRingBuf<T>>,
+    buffer: Arc<ExpShardedRingBuf<T>>,
     count: usize,
     f: F,
 ) -> JoinHandle<usize>
@@ -1582,7 +1585,7 @@ where
 }
 
 /// Spawns a Tokio task with the CFT (Completely Fair Tasks) policy using the current Tokio runtime
-/// context for the purpose of dequeuing items from a shard fully an unbounded number of times from a `ShardedRingBuf<T>`.
+/// context for the purpose of dequeuing items from a shard fully an unbounded number of times from a `ExpShardedRingBuf<T>`.
 ///
 /// On return, it returns a JoinHandle that, when completed, returns the number of successful
 /// dequeue full operations that occurred.
@@ -1597,7 +1600,7 @@ where
 ///       an enqueuer. If you really want to use more infinite looping enqueuers than dequeuers, then
 ///       use only {# of infinite looping dequeuers} shards.
 pub fn cft_spawn_dequeuer_full_unbounded<T, F>(
-    buffer: Arc<ShardedRingBuf<T>>,
+    buffer: Arc<ExpShardedRingBuf<T>>,
     f: F,
 ) -> JoinHandle<usize>
 where
@@ -1703,7 +1706,7 @@ where
 /// re-pin dequeuer once the dequeuer completely empties the shard and it is not paired with
 /// an enqueuer. If you really want to use more infinite looping enqueuers than dequeuers, then
 /// use only {# of infinite looping dequeuers} shards.
-pub fn spawn_assigner<T: 'static>(buffer: Arc<ShardedRingBuf<T>>) -> JoinHandle<()> {
+pub fn spawn_assigner<T: 'static>(buffer: Arc<ExpShardedRingBuf<T>>) -> JoinHandle<()> {
     assert!(
         !buffer.assigner_spawned.load(Ordering::Relaxed),
         "Assigner is spawned already"
@@ -2186,7 +2189,7 @@ pub fn spawn_assigner<T: 'static>(buffer: Arc<ShardedRingBuf<T>>) -> JoinHandle<
 /// This is the termination signal to the assigner. Use this instead of cancelling
 /// the assigner for it to terminate gracefully.
 #[inline(always)]
-pub fn terminate_assigner<T>(buffer: Arc<ShardedRingBuf<T>>)
+pub fn terminate_assigner<T>(buffer: Arc<ExpShardedRingBuf<T>>)
 where
     T: Send + 'static,
 {

@@ -72,10 +72,10 @@ struct Slot<T> {
     item: UnsafeCell<MaybeUninit<Option<T>>>,
     /// 0: empty, 1: full, 2: in progress (deq), 3: in progress (enq)
     state: AtomicU8,
-    /// used to notify an enqueuer task that's waiting on this slot 
+    /// used to notify an enqueuer task that's waiting on this slot
     enq_notify: Notify,
     /// used to notify an dequeuer task that's waiting on this slot
-    deq_notify: Notify
+    deq_notify: Notify,
 }
 
 /// Implements the Slot functions
@@ -86,7 +86,7 @@ impl<T> Slot<T> {
             item: UnsafeCell::new(MaybeUninit::uninit()),
             state: AtomicU8::new(0),
             enq_notify: Notify::new(),
-            deq_notify: Notify::new()
+            deq_notify: Notify::new(),
         }
     }
 }
@@ -134,16 +134,14 @@ impl<T> MLFShardedRingBuf<T> {
                     if remainder == 0 {
                         vec.push(InnerRingBuffer::new(capacity_per_shard));
                     } else {
-                        vec.push(InnerRingBuffer::new(
-                            capacity_per_shard + 1,
-                        ));
+                        vec.push(InnerRingBuffer::new(capacity_per_shard + 1));
                         remainder -= 1;
                     }
                 }
                 vec.into_boxed_slice()
             },
             shard_enq: CachePadded::new(AtomicUsize::new(0)),
-            shard_deq: CachePadded::new(AtomicUsize::new(0))
+            shard_deq: CachePadded::new(AtomicUsize::new(0)),
         }
     }
 
@@ -279,7 +277,7 @@ impl<T> MLFShardedRingBuf<T> {
     ///
     /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a slot in a shard
     /// (this is usually pretty fast)
-    /// 
+    ///
     /// Space complexity: O(1)
     pub async fn enqueue_in_shard(&self, item: T, shard_ind: usize) {
         let shard_ind = shard_ind % self.get_num_of_shards();
@@ -291,7 +289,7 @@ impl<T> MLFShardedRingBuf<T> {
     /// which shard this enqueue operation will occur at. As a result, if you have multiple
     /// shards and one enqueuer task repeatedly using enqueue(), it will sweep across the
     /// shards and place an item in each.
-    /// 
+    ///
     /// If you intend to have an enqueuer task map to a specific shard, use enqueue_in_shard()
     /// for more control.
     ///
@@ -339,9 +337,9 @@ impl<T> MLFShardedRingBuf<T> {
     /// which shard this dequeue operation will occur at. As a result, if you have multiple
     /// shards and one dequeuer task repeatedly using dequeue(), it will sweep across the
     /// shards and place an item in each.
-    /// 
+    ///
     /// On a poison pill, this method will return None.
-    /// 
+    ///
     /// If you intend to have an dequeuer task map to a specific shard, use dequeue_in_shard()
     /// for more control.
     ///
@@ -820,3 +818,17 @@ unsafe impl<T> Send for MLFShardedRingBuf<T> {}
 
 unsafe impl<T> Sync for InnerRingBuffer<T> {}
 unsafe impl<T> Send for InnerRingBuffer<T> {}
+
+// Destructor trait created for Slot<T> to clean up
+// memory allocated onto MaybeUninit<Option<T>> when
+// the Slot goes out of scope
+impl<T> Drop for Slot<T> {
+    fn drop(&mut self) {
+        if self.state.load(Ordering::Relaxed) == 1 {
+            let ptr = self.item.get();
+            unsafe {
+                (*ptr).assume_init_drop();
+            }
+        }
+    }
+}

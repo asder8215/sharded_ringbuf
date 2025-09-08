@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use sharded_ringbuf::{ExpShardedRingBuf, spawn_dequeuer_unbounded, spawn_enqueuer_with_iterator};
 use sharded_ringbuf::{ShardPolicy, spawn_dequeuer_full_unbounded};
-use sharded_ringbuf::{ShardedRingBuf, spawn_dequeuer_unbounded, spawn_enqueuer_with_iterator};
 use std::sync::Arc;
 
 fn test_add(x: usize) -> usize {
@@ -14,7 +14,7 @@ fn test_add(x: usize) -> usize {
 async fn lfsrb_sweep(capacity: usize, shards: usize, task_count: usize) {
     let max_items: usize = capacity;
 
-    let rb = Arc::new(ShardedRingBuf::new(max_items, shards));
+    let rb = Arc::new(ExpShardedRingBuf::new(max_items, shards));
 
     let mut deq_tasks = Vec::with_capacity(shards);
     let mut enq_tasks = Vec::with_capacity(task_count);
@@ -60,7 +60,7 @@ async fn lfsrb_sweep(capacity: usize, shards: usize, task_count: usize) {
 async fn lfsrb_sweep_deq_full(capacity: usize, shards: usize, task_count: usize) {
     let max_items: usize = capacity;
 
-    let rb = Arc::new(ShardedRingBuf::new(max_items, shards));
+    let rb = Arc::new(ExpShardedRingBuf::new(max_items, shards));
 
     let mut deq_tasks = Vec::with_capacity(shards);
     let mut enq_tasks = Vec::with_capacity(task_count);

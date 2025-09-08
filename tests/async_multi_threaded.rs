@@ -1,5 +1,5 @@
+use sharded_ringbuf::ExpShardedRingBuf;
 use sharded_ringbuf::ShardPolicy;
-use sharded_ringbuf::ShardedRingBuf;
 use sharded_ringbuf::cft_spawn_dequeuer_bounded;
 use sharded_ringbuf::cft_spawn_dequeuer_unbounded;
 use sharded_ringbuf::cft_spawn_enqueuer_with_iterator;
@@ -14,7 +14,8 @@ async fn test_spsc_tasks() {
     for _ in 0..100 {
         const MAX_ITEMS: usize = 100;
         const MAX_SHARDS: usize = 10;
-        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ExpShardedRingBuf<usize>> =
+            Arc::new(ExpShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         // Init rb check
         assert!(rb.is_empty());
@@ -77,7 +78,8 @@ async fn test_spmc_tasks() {
         const MAX_ITEMS: usize = 100;
         const MAX_SHARDS: usize = 10;
         const MAX_TASKS: usize = 5;
-        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ExpShardedRingBuf<usize>> =
+            Arc::new(ExpShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         // Init rb check
         assert!(rb.is_empty());
@@ -143,7 +145,8 @@ async fn test_mpsc_tasks() {
         const MAX_ITEMS: usize = 100;
         const MAX_SHARDS: usize = 10;
         const MAX_TASKS: usize = 5;
-        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ExpShardedRingBuf<usize>> =
+            Arc::new(ExpShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         // Init rb check
         assert!(rb.is_empty());
@@ -209,7 +212,8 @@ async fn test_mpmc_tasks() {
         const MAX_ITEMS: usize = 100;
         const MAX_SHARDS: usize = 10;
         const MAX_TASKS: usize = 5;
-        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ExpShardedRingBuf<usize>> =
+            Arc::new(ExpShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         // Init rb check
         assert!(rb.is_empty());
@@ -276,7 +280,8 @@ async fn test_random_and_sweep() {
         const MAX_ITEMS: usize = 100;
         const MAX_SHARDS: usize = 10;
         const MAX_TASKS: usize = 5;
-        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ExpShardedRingBuf<usize>> =
+            Arc::new(ExpShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         // Init rb check
         assert!(rb.is_empty());
@@ -333,7 +338,8 @@ async fn test_full_clear_empty() {
         const MAX_ITEMS: usize = 100;
         const MAX_SHARDS: usize = 10;
         const MAX_TASKS: usize = 5;
-        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ExpShardedRingBuf<usize>> =
+            Arc::new(ExpShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         // Init rb check
         assert!(rb.is_empty());
@@ -389,7 +395,8 @@ async fn test_shiftby_uneven_tasks() {
         const MAX_ITEMS: usize = 100;
         const MAX_SHARDS: usize = 10;
         const MAX_TASKS: usize = 5;
-        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ExpShardedRingBuf<usize>> =
+            Arc::new(ExpShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         assert!(rb.is_empty());
 
@@ -448,7 +455,8 @@ async fn test_cft_policy() {
         const MAX_ITEMS: usize = 1000;
         const MAX_SHARDS: usize = 10;
         const MAX_TASKS: usize = 5;
-        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ExpShardedRingBuf<usize>> =
+            Arc::new(ExpShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         assert!(rb.is_empty());
 
@@ -498,7 +506,8 @@ async fn test_cft_uneven_tasks() {
         const MAX_ITEMS: usize = 1000;
         const MAX_SHARDS: usize = 10;
         const MAX_TASKS: usize = 5;
-        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
+        let rb: Arc<ExpShardedRingBuf<usize>> =
+            Arc::new(ExpShardedRingBuf::new(MAX_ITEMS, MAX_SHARDS));
 
         assert!(rb.is_empty());
 
@@ -549,7 +558,8 @@ async fn test_cft_more_tasks_less_shards() {
         const CAPACITY: usize = 512;
         const MAX_SHARDS: usize = 5;
         const MAX_TASKS: usize = 10;
-        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(CAPACITY, MAX_SHARDS));
+        let rb: Arc<ExpShardedRingBuf<usize>> =
+            Arc::new(ExpShardedRingBuf::new(CAPACITY, MAX_SHARDS));
 
         assert!(rb.is_empty());
 
@@ -601,7 +611,8 @@ async fn test_cft_more_deq_than_enq() {
         const CAPACITY: usize = 512;
         const MAX_SHARDS: usize = 5;
         const MAX_TASKS: usize = 10;
-        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(CAPACITY, MAX_SHARDS));
+        let rb: Arc<ExpShardedRingBuf<usize>> =
+            Arc::new(ExpShardedRingBuf::new(CAPACITY, MAX_SHARDS));
 
         assert!(rb.is_empty());
 
@@ -651,7 +662,8 @@ async fn test_cft_more_deq_items_than_enq() {
         const MAX_ITEMS: usize = 1000;
         const CAPACITY: usize = 512;
         const MAX_SHARDS: usize = 5;
-        let rb: Arc<ShardedRingBuf<usize>> = Arc::new(ShardedRingBuf::new(CAPACITY, MAX_SHARDS));
+        let rb: Arc<ExpShardedRingBuf<usize>> =
+            Arc::new(ExpShardedRingBuf::new(CAPACITY, MAX_SHARDS));
 
         assert!(rb.is_empty());
 

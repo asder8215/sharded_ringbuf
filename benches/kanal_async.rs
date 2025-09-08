@@ -89,15 +89,15 @@ async fn kanal_async(c: usize, task_count: usize) {
     let (s, r) = bounded_async(c);
     let mut handles = Vec::new();
 
-    for _ in 0..1 {
+    for _ in 0..task_count {
         let rx = r.clone();
         handles.push(task::spawn(async move {
-            for _ in 0..task_count {
-                for _ in 0..1 {
+            // for _ in 0..task_count {
+                for _ in 0..250000 {
                     let x = rx.recv().await.unwrap();
                     // test_func(x as u128);
                 }
-            }
+            // }
         }));
     }
 
@@ -105,7 +105,7 @@ async fn kanal_async(c: usize, task_count: usize) {
         let tx = s.clone();
         // let msg = Message::default();
         handles.push(task::spawn(async move {
-            for i in 0..1 {
+            for i in 0..250000 {
                 // tx.send(msg).await.unwrap();
                 tx.send(i).await.unwrap();
             }
@@ -130,7 +130,7 @@ async fn kanal_async_with_msg_vec(
     for _ in 0..8 {
         let rx = r.clone();
         handles.push(task::spawn(async move {
-            for _ in 0..task_count/8 {
+            for _ in 0..task_count / 8 {
                 for _ in 0..msg_count {
                     let x = rx.recv().await.unwrap();
                     // test_func(x.item_one as u128);
@@ -156,9 +156,9 @@ async fn kanal_async_with_msg_vec(
 }
 
 fn benchmark_kanal_async(c: &mut Criterion) {
-    const MAX_THREADS: [usize; 1] = [8];
-    const CAPACITY: usize = 128;
-    const TASKS: [usize; 1] = [100];
+    const MAX_THREADS: [usize; 1] = [4];
+    const CAPACITY: usize = 1024;
+    const TASKS: [usize; 1] = [4];
 
     for thread_num in MAX_THREADS {
         let runtime = tokio::runtime::Builder::new_multi_thread()
