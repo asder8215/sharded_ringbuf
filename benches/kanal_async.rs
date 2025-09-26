@@ -93,10 +93,10 @@ async fn kanal_async(c: usize, task_count: usize) {
         let rx = r.clone();
         handles.push(task::spawn(async move {
             // for _ in 0..task_count {
-                for _ in 0..250000 {
-                    let x = rx.recv().await.unwrap();
-                    // test_func(x as u128);
-                }
+            for _ in 0..250000 {
+                let x = rx.recv().await.unwrap();
+                // test_func(x as u128);
+            }
             // }
         }));
     }
