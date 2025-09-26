@@ -1,4 +1,3 @@
-use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use kanal::bounded_async;
@@ -169,8 +168,7 @@ fn benchmark_kanal_async(c: &mut Criterion) {
 
         for task_count in TASKS {
             let func_name = format!(
-                "Kanal Async: {} threads, {} enq tasks enqueuing 1 million items, 1 looping deq task",
-                thread_num, task_count
+                "Kanal Async: {thread_num} threads, {task_count} enq tasks enqueuing 1 million items, 1 looping deq task"
             );
 
             c.bench_with_input(

@@ -405,9 +405,7 @@ impl<T> ShardedRingBuf<T> {
         let shard_len = self.inner_rb[shard_ind].items.len();
         assert!(
             items_len <= shard_len,
-            "Cannot batch more than {} at shard index {}",
-            shard_len,
-            shard_ind
+            "Cannot batch more than {shard_len} at shard index {shard_ind}"
         );
 
         // If we have multiple shards or multiple worker threads,
@@ -450,9 +448,7 @@ impl<T> ShardedRingBuf<T> {
         let shard_len = self.inner_rb[shard_ind].items.len();
         assert!(
             items_len <= shard_len,
-            "Cannot batch more than {} at shard index {}",
-            shard_len,
-            shard_ind
+            "Cannot batch more than {shard_len} at shard index {shard_ind}"
         );
 
         // If we have multiple shards or multiple worker threads,
@@ -503,11 +499,10 @@ impl<T> ShardedRingBuf<T> {
         let shard_ind = shard_ind % self.get_num_of_shards();
         self.try_acquire_shard(Acquire::Dequeue, shard_ind).await;
 
-        if self.poisoned.load(Ordering::Relaxed) {
-            if self.is_shard_empty(shard_ind) {
+        if self.poisoned.load(Ordering::Relaxed)
+            && self.is_shard_empty(shard_ind) {
                 return None;
             }
-        }
 
         let item = self.dequeue_item_in_shard(shard_ind);
         self.release_shard(shard_ind);
@@ -527,11 +522,10 @@ impl<T> ShardedRingBuf<T> {
         let shard_ind = self.shard_deq.fetch_add(1, Ordering::Relaxed) % self.get_num_of_shards();
         self.try_acquire_shard(Acquire::Dequeue, shard_ind).await;
 
-        if self.poisoned.load(Ordering::Relaxed) {
-            if self.is_shard_empty(shard_ind) {
+        if self.poisoned.load(Ordering::Relaxed)
+            && self.is_shard_empty(shard_ind) {
                 return None;
             }
-        }
 
         let item = self.dequeue_item_in_shard(shard_ind);
         self.release_shard(shard_ind);
@@ -551,11 +545,10 @@ impl<T> ShardedRingBuf<T> {
         let shard_ind = shard_ind % self.get_num_of_shards();
         self.try_acquire_shard(Acquire::Dequeue, shard_ind).await;
 
-        if self.poisoned.load(Ordering::Relaxed) {
-            if self.is_shard_empty(shard_ind) {
+        if self.poisoned.load(Ordering::Relaxed)
+            && self.is_shard_empty(shard_ind) {
                 return None;
             }
-        }
 
         let mut vec_items = Vec::new();
 
@@ -581,11 +574,10 @@ impl<T> ShardedRingBuf<T> {
         let shard_ind = self.shard_deq.fetch_add(1, Ordering::Relaxed) % self.get_num_of_shards();
         self.try_acquire_shard(Acquire::Dequeue, shard_ind).await;
 
-        if self.poisoned.load(Ordering::Relaxed) {
-            if self.is_shard_empty(shard_ind) {
+        if self.poisoned.load(Ordering::Relaxed)
+            && self.is_shard_empty(shard_ind) {
                 return None;
             }
-        }
 
         let mut vec_items = Vec::new();
 
