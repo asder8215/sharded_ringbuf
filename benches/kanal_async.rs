@@ -1,4 +1,3 @@
-use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use kanal::bounded_async;
@@ -93,10 +92,10 @@ async fn kanal_async(c: usize, task_count: usize) {
         let rx = r.clone();
         handles.push(task::spawn(async move {
             // for _ in 0..task_count {
-                for _ in 0..250000 {
-                    let x = rx.recv().await.unwrap();
-                    // test_func(x as u128);
-                }
+            for _ in 0..250000 {
+                let x = rx.recv().await.unwrap();
+                // test_func(x as u128);
+            }
             // }
         }));
     }
@@ -169,8 +168,7 @@ fn benchmark_kanal_async(c: &mut Criterion) {
 
         for task_count in TASKS {
             let func_name = format!(
-                "Kanal Async: {} threads, {} enq tasks enqueuing 1 million items, 1 looping deq task",
-                thread_num, task_count
+                "Kanal Async: {thread_num} threads, {task_count} enq tasks enqueuing 1 million items, 1 looping deq task"
             );
 
             c.bench_with_input(
