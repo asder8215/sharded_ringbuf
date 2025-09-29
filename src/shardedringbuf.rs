@@ -307,11 +307,13 @@ impl<T> ShardedRingBuf<T> {
                 }
             }
 
-            if matches!(acquire, Acquire::Dequeue) {
-                self.job_post_shard_notifs[shard_ind].notified().await;
-            } else {
-                self.job_space_shard_notifs[shard_ind].notified().await;
-            }
+            // You don't need this part; you only need to send a notif on release
+            // of the shard
+            // if matches!(acquire, Acquire::Dequeue) {
+            //     self.job_post_shard_notifs[shard_ind].notified().await;
+            // } else {
+            //     self.job_space_shard_notifs[shard_ind].notified().await;
+            // }
         }
         // current
     }
