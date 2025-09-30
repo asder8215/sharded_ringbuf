@@ -16,11 +16,17 @@ homepage = "https://github.com/asder8215/sharded_ringbuf"
 documentation = "https://docs.rs/sharded_ringbuf/latest/sharded_ringbuf/"
 
 [dependencies]
-async-executor = "1.13.3"
 crossbeam-utils = "^0.8.21"
-fastrand = "^2.3.0"
+fastrand = {version = "^2.3.0", optional = true}
 tokio = {version = "^1.45.1", features = ["rt", "sync"] }
-futures-util = "0.3.31"
+futures-util = {version = "^0.3.31", optional = true}
+
+[features]
+srb = []
+mlf_srb = []
+exp_srb = ["fastrand", "futures-util"]
+default = ["srb", "mlf_srb"]
+all = ["srb", "mlf_srb"]
 
 [dev-dependencies]
 criterion = {version = "^0.6.0", features =["async_tokio"] }
@@ -32,23 +38,7 @@ flume = {version="0.11", features= ["async"] }
 smol = "2.0.2"
 
 [[bench]]
-name = "srb_shiftby"
-harness = false
-
-[[bench]]
-name = "srb_sweep"
-harness = false
-
-[[bench]]
-name = "srb_randomsweep"
-harness = false
-
-[[bench]]
-name = "srb_cft"
-harness = false
-
-[[bench]]
-name = "srb_pin"
+name = "srb"
 harness = false
 
 [[bench]]

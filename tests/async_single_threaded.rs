@@ -1,12 +1,16 @@
-use sharded_ringbuf::ExpShardedRingBuf;
-use sharded_ringbuf::ShardPolicy;
-use sharded_ringbuf::cft_spawn_dequeuer_bounded;
-use sharded_ringbuf::cft_spawn_dequeuer_unbounded;
-use sharded_ringbuf::cft_spawn_enqueuer_with_iterator;
-use sharded_ringbuf::spawn_assigner;
-use sharded_ringbuf::spawn_dequeuer_unbounded;
-use sharded_ringbuf::spawn_enqueuer_with_iterator;
-use sharded_ringbuf::terminate_assigner;
+// use sharded_ringbuf::ExpShardedRingBuf;
+// use sharded_ringbuf::ShardPolicy;
+// use sharded_ringbuf::cft_spawn_dequeuer_bounded;
+// use sharded_ringbuf::cft_spawn_dequeuer_unbounded;
+// use sharded_ringbuf::cft_spawn_enqueuer_with_iterator;
+// use sharded_ringbuf::spawn_assigner;
+// use sharded_ringbuf::spawn_dequeuer_unbounded;
+// use sharded_ringbuf::spawn_enqueuer_with_iterator;
+// use sharded_ringbuf::terminate_assigner;
+#![cfg(feature = "exp_srb")]
+use sharded_ringbuf::exp_srb::ExpShardedRingBuf;
+use sharded_ringbuf::exp_srb::ShardPolicy;
+use sharded_ringbuf::exp_srb::task_local_spawn::*;
 use std::sync::Arc;
 
 #[tokio::test(flavor = "current_thread")]

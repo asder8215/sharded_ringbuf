@@ -877,7 +877,6 @@ name = "sharded_ringbuf"
 version = "0.1.2"
 dependencies = [
  "async-channel",
- "async-executor",
  "criterion",
  "crossbeam",
  "crossbeam-utils",
