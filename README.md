@@ -155,7 +155,7 @@ Benchmarking ShardedRingBuf was done with 8 threads, 8 shards, 1024 total capaci
 
 Machine: AMD Ryzen 7 5800X 3.8 GHz 8-Core Processor
 
-Rust: rustc rustc 1.87.0 (17067e9ac 2025-05-09)
+Rust: rustc rustc 1.88.0 (17067e9ac 2025-05-09)
 
 The following graphs are results generated from Criterion:
 ![ShardedRingBuf Line Graph Results](benchmark_res/srb_benches/shardedringbuf/report/lines.svg)
