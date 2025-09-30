@@ -1,10 +1,13 @@
 # Change for shardedringbuf:
 
-## In v0.1.1:
+## In v0.1.3:
 * `ShardedRingBuf<T>` has been refactored to only support the previous Pin policy code from previous iteration (see `exp_srb/` to see previous iteration)
 * A new hybrid lock-free/async-waiting data structure added to this crate called `MLFShardedRingBuf<T>` (Most Lock Free Sharded Ring Buffer)
 * Benchmarking results has been collected through Criterion and shown on README.md
 * Lots of refactoring and documentation updates
+
+## In v0.1.2:
+* Forgot to update this, so you might want to check the commit history for this
 
 ## In v0.1.1:
 * Changed the enqueue and dequeue indices to Cell usize rather than AtomicUsize in `InnerRingBuffer<T>` because everything is protected under a shard lock.
