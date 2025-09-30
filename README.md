@@ -159,7 +159,7 @@ The following graphs are results generated from Criterion:
 ![Kanal Async Line Graph Results](benchmark_res/kanal%20async/report/lines.svg)
 ![Kanal Async Violin Graph Results](benchmark_res/kanal%20async/report/violin.svg)
 
-The x-axis are batching input sizes per task for 1000 tasks and the y-axis is how long it took to complete the following work.
+The x-axis are batching input sizes per task for 1000 tasks and the y-axis is how long it took to complete the following work in milliseconds.
 
 For more detailed results on iterations and each batching input size, then you can take a look at the `report/index.html` within the `benchmark_res/kanal async/` or `benchmark_res/shardedringbuf/`folder.
 
