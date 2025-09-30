@@ -162,7 +162,7 @@ async fn kanal_async_with_msg_vec(
 fn benchmark_kanal_async(c: &mut Criterion) {
     const MAX_THREADS: [usize; 1] = [8];
     const CAPACITY: usize = 1024;
-    const TASKS: [usize; 1] = [100];
+    const TASKS: [usize; 1] = [1000];
 
     let mut group = c.benchmark_group("Kanal Async");
     // for thread_num in MAX_THREADS {
