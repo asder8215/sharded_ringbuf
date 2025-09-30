@@ -666,7 +666,7 @@ impl<T> ShardedRingBuf<T> {
     ///     async move {
     ///         loop {
     ///             for i in 0..rb_clone.get_num_of_shards() {
-    ///              rb_clone.notify_pin_shard(i)
+    ///                 rb_clone.notify_pin_shard(i)
     ///             }
     ///             yield_now().await;
     ///          }
