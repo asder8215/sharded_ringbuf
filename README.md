@@ -153,6 +153,10 @@ You can also take a look at the `tests/` or `benches/` directory to see examples
 # Benchmark Results
 Benchmarking ShardedRingBuf was done with 8 threads, 8 shards, 1024 total capacity (128 capacity per shard), and 1000 enqueuer tasks alongisde a looping dequeuer task per shard with varying number of items being batched (1, 2, 4, 8, 16, 32, 64, 128 8-byte items). This was compared to Kanal Async, which operated under 1024 total capacity, 8 threads, and 1000 enqueuer tasks alongside one looping receiver task with varying number of items being batched (1, 2, 4, 8, 16, 32, 64, 128 8-byte items).
 
+Machine: AMD Ryzen 7 5800X 3.8 GHz 8-Core Processor
+
+Rust: rustc rustc 1.87.0 (17067e9ac 2025-05-09)
+
 The following graphs are results generated from Criterion:
 ![ShardedRingBuf Line Graph Results](benchmark_res/srb_benches/shardedringbuf/report/lines.svg)
 ![ShardedRingBuf Violin Graph Results](benchmark_res/srb_benches/shardedringbuf/report/violin.svg)
