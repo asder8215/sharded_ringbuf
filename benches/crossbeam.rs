@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 #[allow(dead_code)]
 fn test_add(x: usize) -> usize {
@@ -18,12 +18,7 @@ struct BigData {
 
 #[allow(dead_code, unused_variables)]
 #[allow(dead_code)]
-async fn crossbeam(
-    msg_vecs: Vec<Vec<BigData>>,
-    c: usize,
-    task_count: usize,
-    msg_count: usize,
-) {
+async fn crossbeam(msg_vecs: Vec<Vec<BigData>>, c: usize, task_count: usize, msg_count: usize) {
     // let (s, r) = bounded_async(c);
     // let queue = crossbeam::queue::ArrayQueue::new(c);
     // let mut handles = Vec::new();
@@ -109,16 +104,12 @@ fn benchmark_crossbeam(c: &mut Criterion) {
 
     //     todo!();
     // }
-                c.bench_with_input(
-                        BenchmarkId::new("Crossbeam", 0),
-                        &(0),
-                        |b, &cap| {
-                            // Insert a call to `to_async` to convert the bencher to async mode.
-                            // The timing loops are the same as with the normal bencher.
-                            // let msg_vec_clone = msg_vecs.clone();
-                            b.iter(|| sync_crossbeam())
-                        },
-                    );
+    c.bench_with_input(BenchmarkId::new("Crossbeam", 0), &(0), |b, &cap| {
+        // Insert a call to `to_async` to convert the bencher to async mode.
+        // The timing loops are the same as with the normal bencher.
+        // let msg_vec_clone = msg_vecs.clone();
+        b.iter(|| sync_crossbeam())
+    });
 }
 
 criterion_group!(benches, benchmark_crossbeam);

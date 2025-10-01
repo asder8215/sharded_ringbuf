@@ -268,9 +268,7 @@ fn benchmark_srb(c: &mut Criterion) {
 
         for shard_num in SHARDS {
             for task_count in TASKS {
-                let func_name = format!(
-                    "ShardedRingBuf"
-                );
+                let func_name = format!("ShardedRingBuf");
 
                 group.bench_with_input(
                     BenchmarkId::new(func_name, CAPACITY),
