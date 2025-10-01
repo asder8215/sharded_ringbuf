@@ -101,7 +101,7 @@ async fn srb_bench(capacity: usize, shards: usize, task_count: usize) {
 
     for i in 0..task_count {
         // println!("Hi");
-        let items = 0..10000000;
+        let items = 0 as i64..10000000;
         let handle = tokio::spawn({
             let rb_clone = rb.clone();
             async move {
