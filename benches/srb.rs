@@ -1,3 +1,4 @@
+#[allow(unused)]
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
@@ -26,7 +27,7 @@ struct Message {
 #[allow(dead_code)]
 struct BigData {
     // buf: Box<[u8; 1 * 1024]>, // 1 KiB
-    buf: Box<[u8; 8]>, // 8 bytes
+    buf: Box<[u8; 4]>, // 8 bytes
 }
 
 static FUNC_TO_TEST: i32 = 3;
@@ -100,14 +101,15 @@ async fn srb_bench(capacity: usize, shards: usize, task_count: usize) {
 
     for i in 0..task_count {
         // println!("Hi");
-        let items = 0..250000;
+        let items = 0..10000000;
         let handle = tokio::spawn({
             let rb_clone = rb.clone();
             async move {
                 let mut counter = 0;
-                let full_enq = rb_clone
-                    .get_shard_capacity(rb_clone.get_num_of_shards() - 1)
-                    .unwrap();
+                // let full_enq = rb_clone
+                //     .get_shard_capacity(rb_clone.get_num_of_shards() - 1)
+                //     .unwrap();
+                let full_enq = 2000;
                 let mut enq_vec = Vec::with_capacity(full_enq);
                 for item in items {
                     if counter != 0 && counter % full_enq == 0 {
@@ -135,8 +137,8 @@ async fn srb_bench(capacity: usize, shards: usize, task_count: usize) {
                 loop {
                     match rb_clone.dequeue_full_in_shard(i).await {
                         Some(items) => {
-                            for _i in items {
-                                // test_func(i);
+                            for _j in items {
+                                // println!("{j}");
                             }
                         }
                         None => break,
@@ -175,6 +177,7 @@ async fn srb_bench(capacity: usize, shards: usize, task_count: usize) {
     notifier_task.abort();
 }
 
+#[allow(unused)]
 async fn srb_with_msg_vec(
     msg_vecs: Vec<Vec<BigData>>,
     capacity: usize,
@@ -247,43 +250,14 @@ fn benchmark_srb(c: &mut Criterion) {
     // const MAX_THREADS: [usize; 2] = [4, 8];
 
     let mut group = c.benchmark_group("ShardedRingBuf");
-    const MAX_THREADS: [usize; 1] = [8];
-    const CAPACITY: usize = 1024;
+    const MAX_THREADS: [usize; 1] = [2];
+    // const CAPACITY: usize = 1024;
+    const CAPACITY: usize = 32768;
     // const CAPACITY: usize = 200000;
     // const SHARDS: [usize; 5] = [1, 2, 4, 8, 16];
     // const TASKS: [usize; 5] = [1, 2, 4, 8, 16];
-    const SHARDS: [usize; 1] = [8];
-    const TASKS: [usize; 1] = [1000];
-
-    // for thread_num in MAX_THREADS {
-    //     let runtime = tokio::runtime::Builder::new_multi_thread()
-    //         .enable_all()
-    //         .worker_threads(thread_num)
-    //         .build()
-    //         .unwrap();
-
-    //     for shard_num in SHARDS {
-    //         for task_count in TASKS {
-    //             let func_name = format!(
-    //                 "Pin: {thread_num} threads, {shard_num} shards, {task_count} enq tasks enqueuing 1 million items, {shard_num} looping deq task"
-    //             );
-
-    //             c.bench_with_input(
-    //                 BenchmarkId::new(func_name, CAPACITY),
-    //                 &(CAPACITY),
-    //                 |b, &cap| {
-    //                     // Insert a call to `to_async` to convert the bencher to async mode.
-    //                     // The timing loops are the same as with the normal bencher.
-    //                     b.to_async(&runtime).iter(async || {
-    //                         srb_bench(cap, shard_num, task_count).await;
-    //                     });
-    //                 },
-    //             );
-    //         }
-    //     }
-    // }
-
-    const MSG_SIZES: [usize; 8] = [1, 2, 4, 8, 16, 32, 64, 128];
+    const SHARDS: [usize; 1] = [1];
+    const TASKS: [usize; 1] = [2];
 
     for thread_num in MAX_THREADS {
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -294,54 +268,85 @@ fn benchmark_srb(c: &mut Criterion) {
 
         for shard_num in SHARDS {
             for task_count in TASKS {
-                for msg_size in MSG_SIZES {
-                    let msg_count: usize = msg_size;
-                    // let msg = BigData { buf: Box::new([0; 1 * 1024]) };
-                    let msg = BigData {
-                        buf: Box::new([0; 8]),
-                    };
-                    let mut msg_vecs = Vec::with_capacity(TASKS[0]);
-                    for _ in 0..TASKS[0] {
-                        msg_vecs.push(Vec::with_capacity(msg_count));
-                        let msg_vecs_len = msg_vecs.len();
-                        for _ in 0..msg_count {
-                            msg_vecs[msg_vecs_len - 1].push(msg.clone());
-                        }
-                    }
-                    // let func_name = format!(
-                    //     "{} threads, {} shards, {} enq tasks each w/ {msg_count} 8 byte items",
-                    //     thread_num, shard_num, task_count
-                    // );
-                    let func_name = format!("Batching {msg_count} 8-byte items");
-                    group.bench_with_input(
-                        BenchmarkId::new(func_name, msg_size),
-                        &(CAPACITY),
-                        |b, &cap| {
-                            // Insert a call to `to_async` to convert the bencher to async mode.
-                            // The timing loops are the same as with the normal bencher.
-                            // let msg_vec_clone = msg_vecs.clone();
-                            b.to_async(&runtime).iter_custom(|iters| {
-                                let msg_vecs = msg_vecs.clone();
-                                async move {
-                                    let mut total = Duration::ZERO;
+                let func_name = format!(
+                    "ShardedRingBuf"
+                );
 
-                                    for _i in 0..iters {
-                                        let msg_vecs = msg_vecs.clone();
-                                        let start = Instant::now();
-                                        srb_with_msg_vec(msg_vecs, cap, shard_num, task_count)
-                                            .await;
-                                        let end = Instant::now();
-                                        total += end - start;
-                                    }
-                                    total
-                                }
-                            });
-                        },
-                    );
-                }
+                group.bench_with_input(
+                    BenchmarkId::new(func_name, CAPACITY),
+                    &(CAPACITY),
+                    |b, &cap| {
+                        // Insert a call to `to_async` to convert the bencher to async mode.
+                        // The timing loops are the same as with the normal bencher.
+                        b.to_async(&runtime).iter(async || {
+                            srb_bench(cap, shard_num, task_count).await;
+                        });
+                    },
+                );
             }
         }
     }
+
+    // const MSG_SIZES: [usize; 8] = [1, 2, 4, 8, 16, 32, 64, 128];
+    // const MSG_SIZES: [usize; 1] = [10000];
+
+    // for thread_num in MAX_THREADS {
+    //     let runtime = tokio::runtime::Builder::new_multi_thread()
+    //         .enable_all()
+    //         .worker_threads(thread_num)
+    //         .build()
+    //         .unwrap();
+
+    //     for shard_num in SHARDS {
+    //         for task_count in TASKS {
+    //             for msg_size in MSG_SIZES {
+    //                 let msg_count: usize = msg_size;
+    //                 // let msg = BigData { buf: Box::new([0; 1 * 1024]) };
+    //                 let msg = BigData {
+    //                     buf: Box::new([0; 4]),
+    //                 };
+    //                 let mut msg_vecs = Vec::with_capacity(TASKS[0]);
+    //                 for _ in 0..TASKS[0] {
+    //                     msg_vecs.push(Vec::with_capacity(msg_count));
+    //                     let msg_vecs_len = msg_vecs.len();
+    //                     for _ in 0..msg_count {
+    //                         msg_vecs[msg_vecs_len - 1].push(msg.clone());
+    //                     }
+    //                 }
+    //                 // let func_name = format!(
+    //                 //     "{} threads, {} shards, {} enq tasks each w/ {msg_count} 8 byte items",
+    //                 //     thread_num, shard_num, task_count
+    //                 // );
+    //                 let func_name = format!("Batching {msg_count} 8-byte items");
+    //                 group.bench_with_input(
+    //                     BenchmarkId::new(func_name, msg_size),
+    //                     &(CAPACITY),
+    //                     |b, &cap| {
+    //                         // Insert a call to `to_async` to convert the bencher to async mode.
+    //                         // The timing loops are the same as with the normal bencher.
+    //                         // let msg_vec_clone = msg_vecs.clone();
+    //                         b.to_async(&runtime).iter_custom(|iters| {
+    //                             let msg_vecs = msg_vecs.clone();
+    //                             async move {
+    //                                 let mut total = Duration::ZERO;
+
+    //                                 for _i in 0..iters {
+    //                                     let msg_vecs = msg_vecs.clone();
+    //                                     let start = Instant::now();
+    //                                     srb_with_msg_vec(msg_vecs, cap, shard_num, task_count)
+    //                                         .await;
+    //                                     let end = Instant::now();
+    //                                     total += end - start;
+    //                                 }
+    //                                 total
+    //                             }
+    //                         });
+    //                     },
+    //                 );
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 criterion_group!(benches, benchmark_srb);
