@@ -52,9 +52,7 @@ async fn test_spsc_tasks() {
                 let rb_clone = rb.clone();
                 async move {
                     let mut counter = 0;
-                    let full_enq = rb_clone
-                        .get_shard_capacity(0)
-                        .unwrap();
+                    let full_enq = rb_clone.get_shard_capacity(0).unwrap();
                     let mut enq_vec = Vec::with_capacity(full_enq);
                     for item in 0..2 * MAX_ITEMS {
                         if counter != 0 && counter % full_enq == 0 {
@@ -156,9 +154,7 @@ async fn test_spmc_tasks() {
                 let rb_clone = rb.clone();
                 async move {
                     let mut counter = 0;
-                    let full_enq = rb_clone
-                        .get_shard_capacity(0)
-                        .unwrap() / MAX_SHARDS;
+                    let full_enq = rb_clone.get_shard_capacity(0).unwrap() / MAX_SHARDS;
                     let mut enq_vec = Vec::with_capacity(full_enq);
                     for item in 0..2 * MAX_ITEMS {
                         if counter != 0 && counter % full_enq == 0 {
@@ -261,9 +257,7 @@ async fn test_mpsc_tasks() {
                 let rb_clone = rb.clone();
                 async move {
                     let mut counter = 0;
-                    let full_enq = rb_clone
-                        .get_shard_capacity(0)
-                        .unwrap();
+                    let full_enq = rb_clone.get_shard_capacity(0).unwrap();
                     let mut enq_vec = Vec::with_capacity(full_enq);
                     for item in 0..2 * MAX_ITEMS {
                         if counter != 0 && counter % full_enq == 0 {
@@ -366,9 +360,7 @@ async fn test_mpmc_tasks() {
                 let rb_clone = rb.clone();
                 async move {
                     let mut counter = 0;
-                    let full_enq = rb_clone
-                        .get_shard_capacity(0)
-                        .unwrap() / MAX_SHARDS;
+                    let full_enq = rb_clone.get_shard_capacity(0).unwrap() / MAX_SHARDS;
                     let mut enq_vec = Vec::with_capacity(full_enq);
                     for item in 0..2 * MAX_ITEMS {
                         if counter != 0 && counter % full_enq == 0 {
