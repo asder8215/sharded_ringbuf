@@ -94,14 +94,15 @@ async fn srb_bench(capacity: usize, shards: usize, task_count: usize) {
     // println!("Hi");
     let max_items: usize = capacity;
 
-    let rb = ShardedRingBuf::new(max_items, shards);
+    // let rb = ShardedRingBuf::new(max_items, shards);
+    let rb = ShardedRingBuf::new_with_enq_num(max_items, shards, task_count);
 
     let mut deq_tasks = Vec::with_capacity(shards);
     let mut enq_tasks = Vec::with_capacity(task_count);
 
     for i in 0..task_count {
         // println!("Hi");
-        let items = 0 as i64..10000000;
+        let items = 0 as i64..10_000_000;
         let handle = tokio::spawn({
             let rb_clone = rb.clone();
             async move {
@@ -113,7 +114,8 @@ async fn srb_bench(capacity: usize, shards: usize, task_count: usize) {
                 let mut enq_vec = Vec::with_capacity(full_enq);
                 for item in items {
                     if counter != 0 && counter % full_enq == 0 {
-                        rb_clone.enqueue_full_in_shard(enq_vec, i).await;
+                        // let _ = rb_clone.enqueue_full_in_shard(enq_vec, i).await;
+                        let _ = rb_clone.enqueue_full(enq_vec).await;
                         enq_vec = Vec::with_capacity(full_enq);
                         enq_vec.push(item);
                         counter += 1;
@@ -123,7 +125,8 @@ async fn srb_bench(capacity: usize, shards: usize, task_count: usize) {
                     }
                 }
                 if !enq_vec.is_empty() {
-                    rb_clone.enqueue_full_in_shard(enq_vec, i).await;
+                    // let _ = rb_clone.enqueue_full_in_shard(enq_vec, i).await;
+                    let _ = rb_clone.enqueue_full(enq_vec).await;
                 }
             }
         });
@@ -250,14 +253,14 @@ fn benchmark_srb(c: &mut Criterion) {
     // const MAX_THREADS: [usize; 2] = [4, 8];
 
     let mut group = c.benchmark_group("ShardedRingBuf");
-    const MAX_THREADS: [usize; 1] = [2];
+    const MAX_THREADS: [usize; 1] = [8];
     // const CAPACITY: usize = 1024;
     const CAPACITY: usize = 32768;
     // const CAPACITY: usize = 200000;
     // const SHARDS: [usize; 5] = [1, 2, 4, 8, 16];
     // const TASKS: [usize; 5] = [1, 2, 4, 8, 16];
-    const SHARDS: [usize; 1] = [1];
-    const TASKS: [usize; 1] = [2];
+    const SHARDS: [usize; 1] = [8];
+    const TASKS: [usize; 1] = [1];
 
     for thread_num in MAX_THREADS {
         let runtime = tokio::runtime::Builder::new_multi_thread()
