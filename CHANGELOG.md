@@ -1,5 +1,14 @@
 # Change for shardedringbuf:
 
+## In v0.3.0:
+* `ShardedRingBuf<T>` has a new instance method `new_with_enq_num` for the purpose of using the buffer knowing how many
+enqueue tasks a user will spawn (useful for SPMC or if enqueuer tasks < num of shards) and distributing notifications to
+enqueuers evenly by dequeuers
+* Added Result return types on enqueue methods for `ShardedRingBuf<T>`
+* Removed unnecessary code and async functions
+* Updated documentation of `ShardedRingBuf<T>` methods
+* Transferred over some basic tests from `ExpShardedRingBuf<T>` (deprecated) to `ShardedRingBuf<T>` (finally)
+
 ## In v0.2.0:
 * `ShardedRingBuf<T>` has been refactored to only support the previous Pin policy code from previous iteration (see `exp_srb/` to see previous iteration)
 * A new hybrid lock-free/async-waiting data structure added to this crate called `MLFShardedRingBuf<T>` (Most Lock Free Sharded Ring Buffer)
