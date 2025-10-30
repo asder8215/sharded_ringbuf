@@ -115,7 +115,8 @@ async fn srb_bench(capacity: usize, shards: usize, task_count: usize) {
                 for item in items {
                     if counter != 0 && counter % full_enq == 0 {
                         // let _ = rb_clone.enqueue_full_in_shard(enq_vec, i).await;
-                        let _ = rb_clone.enqueue_full(enq_vec).await;
+                        // let _ = rb_clone.enqueue_full(enq_vec).await;
+                        let _ = rb_clone.enqueue(enq_vec).await;
                         enq_vec = Vec::with_capacity(full_enq);
                         enq_vec.push(item);
                         counter += 1;
@@ -126,7 +127,8 @@ async fn srb_bench(capacity: usize, shards: usize, task_count: usize) {
                 }
                 if !enq_vec.is_empty() {
                     // let _ = rb_clone.enqueue_full_in_shard(enq_vec, i).await;
-                    let _ = rb_clone.enqueue_full(enq_vec).await;
+                    // let _ = rb_clone.enqueue_full(enq_vec).await;
+                    let _ = rb_clone.enqueue(enq_vec).await;
                 }
             }
         });
@@ -138,7 +140,8 @@ async fn srb_bench(capacity: usize, shards: usize, task_count: usize) {
             let rb_clone = rb.clone();
             async move {
                 loop {
-                    match rb_clone.dequeue_full_in_shard(i).await {
+                    // match rb_clone.dequeue_full_in_shard(i).await {
+                    match rb_clone.dequeue_in_shard(i).await {
                         Some(items) => {
                             for _j in items {
                                 // println!("{j}");
@@ -260,7 +263,7 @@ fn benchmark_srb(c: &mut Criterion) {
     // const SHARDS: [usize; 5] = [1, 2, 4, 8, 16];
     // const TASKS: [usize; 5] = [1, 2, 4, 8, 16];
     const SHARDS: [usize; 1] = [8];
-    const TASKS: [usize; 1] = [1];
+    const TASKS: [usize; 1] = [8];
 
     for thread_num in MAX_THREADS {
         let runtime = tokio::runtime::Builder::new_multi_thread()
