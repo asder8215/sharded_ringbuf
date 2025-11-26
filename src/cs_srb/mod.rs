@@ -506,8 +506,7 @@ impl<T> CSShardedRingBuf<T> {
     /// Clears the buffer back to an empty state
     ///
     /// Note: This function is not safe to use within a multithreaded
-    /// multitask environment. If you need to clear while performing concurrent
-    /// tasks, use [Self::async_clear]
+    /// multitask environment.
     ///
     /// Time Complexity: O(s * c_s) where s is the num of shards,
     /// c_s is the capacity per shard

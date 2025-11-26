@@ -27,7 +27,7 @@ enum Acquire {
 /// In theory, a fully lock-free multi-ringbuffer data structure is possible
 /// with a lock free waitlist of wakers (think of lock free unbounded FIFO queue using a doubly linked list
 /// or even a stack-based style using a lock free singly linked list).
-/// I would imagine this would be faster than using Mutex<Waitlist> because, in most cases,
+/// I would imagine this would be faster than using `Mutex<Waitlist>` because, in most cases,
 /// you would be able to add a push a new waiter at the head of the queue whilst popping a waiter from the back
 /// end of the queue when you notify one waiter. However, the performance shouldn't significantly change as a
 /// result.
