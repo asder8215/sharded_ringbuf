@@ -3,7 +3,7 @@
 [![Docs](https://img.shields.io/docsrs/sharded_ringbuf?style=for-the-badge&logo=rust)](https://docs.rs/sharded_ringbuf/latest/sharded_ringbuf/)
 
 # sharded_ringbuf
-An async, sharded SPSC/MPSC/MPMC ring buffer in Rust.
+An async, sharded SPSC/MPSC/MPMC ring buffer in Rust pruposed for nonblocking async executions.
 
 # Example Usage
 The following are examples of how to use ShardedRingBuf:
@@ -148,7 +148,8 @@ async fn enq_batching_example(
     notifier_task.abort();
 }
 ```
-You can also take a look at the `tests/` or `benches/` directory to see examples on how to use this structure. 
+You can also take a look at the `tests/` or `benches/` directory to see examples on how to use this structure and the
+cancel safe version of `ShardedRingBuf<T>` (`CSShardedRingBuf<T>`). 
 
 # Benchmark Results
 Benchmarking ShardedRingBuf was done with 8 threads, 8 shards, 1024 total capacity (128 capacity per shard), and 1000 enqueuer tasks alongisde a looping dequeuer task per shard with varying number of items being batched (1, 2, 4, 8, 16, 32, 64, 128 8-byte items). This was compared to Kanal Async, which operated under 1024 total capacity, 8 threads, and 1000 enqueuer tasks alongside one looping receiver task with varying number of items being batched (1, 2, 4, 8, 16, 32, 64, 128 8-byte items).

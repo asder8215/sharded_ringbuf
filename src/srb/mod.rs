@@ -723,7 +723,7 @@ impl<T> ShardedRingBuf<T> {
     /// Important Note: When you want all dequeuer tasks to terminate
     /// gracefully after the buffer has been poisoned, you need to
     /// spawn a "notifier_task" that looks like this.
-    /// ```
+    /// ```no_run
     /// let notifier_task: JoinHandle<()> = tokio::spawn({
     ///     let rb_clone: Arc<ShardedRingBuf<T>> = rb.clone();
     ///     async move {

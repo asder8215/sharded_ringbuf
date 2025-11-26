@@ -1,7 +1,7 @@
-#[allow(unused)]
-use std::time::{Duration, Instant};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use kanal::bounded_async;
+#[allow(unused)]
+use std::time::{Duration, Instant};
 use tokio::task;
 
 #[derive(Default, Debug, Clone, Copy)]

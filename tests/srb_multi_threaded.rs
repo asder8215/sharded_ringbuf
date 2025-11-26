@@ -30,14 +30,9 @@ async fn test_spsc_tasks() {
                 let rb_clone = rb.clone();
                 let mut counter = 0;
                 async move {
-                    loop {
-                        match rb_clone.dequeue_full_in_shard(i).await {
-                            Some(items) => {
-                                for _ in items {
-                                    counter += 1;
-                                }
-                            }
-                            None => break,
+                    while let Some(items) = rb_clone.dequeue_full_in_shard(i).await {
+                        for _ in items {
+                            counter += 1;
                         }
                     }
                     counter
@@ -132,14 +127,9 @@ async fn test_spmc_tasks() {
                 let rb_clone = rb.clone();
                 let mut counter = 0;
                 async move {
-                    loop {
-                        match rb_clone.dequeue_full_in_shard(i).await {
-                            Some(items) => {
-                                for _ in items {
-                                    counter += 1;
-                                }
-                            }
-                            None => break,
+                    while let Some(items) = rb_clone.dequeue_full_in_shard(i).await {
+                        for _ in items {
+                            counter += 1;
                         }
                     }
                     counter
@@ -235,14 +225,9 @@ async fn test_mpsc_tasks() {
                 let rb_clone = rb.clone();
                 let mut counter = 0;
                 async move {
-                    loop {
-                        match rb_clone.dequeue_full_in_shard(i).await {
-                            Some(items) => {
-                                for _ in items {
-                                    counter += 1;
-                                }
-                            }
-                            None => break,
+                    while let Some(items) = rb_clone.dequeue_full_in_shard(i).await {
+                        for _ in items {
+                            counter += 1;
                         }
                     }
                     counter
@@ -338,14 +323,9 @@ async fn test_mpmc_tasks() {
                 let rb_clone = rb.clone();
                 let mut counter = 0;
                 async move {
-                    loop {
-                        match rb_clone.dequeue_full_in_shard(i).await {
-                            Some(items) => {
-                                for _ in items {
-                                    counter += 1;
-                                }
-                            }
-                            None => break,
+                    while let Some(items) = rb_clone.dequeue_full_in_shard(i).await {
+                        for _ in items {
+                            counter += 1;
                         }
                     }
                     counter

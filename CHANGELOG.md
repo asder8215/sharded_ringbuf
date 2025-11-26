@@ -1,6 +1,14 @@
 # Change for shardedringbuf:
 
 ## In v0.4.0:
+* Added `CSShardedRingBuf<T>`, which is a 100% cancel safe version of `ShardedRingBuf<T>`. Users need
+to acquire a guard on the shard first in an async manner before passing ownership of their item to the
+buffer.
+  * Surprisingly, `CSShardedRingBuf<T>` runs faster than `ShardedRingBuf<T>` probably due to compiler
+  optimizations
+* Both `CSShardedRingBuf<T>` and `ShardedRingBuf<T>` cache pad their `Box<[Notify]>` fields, which slightly
+improves performance
+* Updated documentation a bit
 
 ## In v0.3.0:
 * `ShardedRingBuf<T>` has a new instance method `new_with_enq_num` for the purpose of using the buffer knowing how many
