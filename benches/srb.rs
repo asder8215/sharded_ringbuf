@@ -100,7 +100,7 @@ async fn srb_bench(capacity: usize, shards: usize, task_count: usize) {
     let mut deq_tasks = Vec::with_capacity(shards);
     let mut enq_tasks = Vec::with_capacity(task_count);
 
-    for i in 0..task_count {
+    for _i in 0..task_count {
         // println!("Hi");
         let items = 0 as i64..10_000_000;
         let handle = tokio::spawn({
@@ -258,7 +258,7 @@ fn benchmark_srb(c: &mut Criterion) {
     let mut group = c.benchmark_group("ShardedRingBuf");
     const MAX_THREADS: [usize; 1] = [8];
     // const CAPACITY: usize = 1024;
-    const CAPACITY: usize = 32768;
+    const CAPACITY: usize = 8;
     // const CAPACITY: usize = 200000;
     // const SHARDS: [usize; 5] = [1, 2, 4, 8, 16];
     // const TASKS: [usize; 5] = [1, 2, 4, 8, 16];

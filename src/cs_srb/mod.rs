@@ -1,3 +1,5 @@
+pub mod guards;
+use crate::cs_srb::guards::ShardLockGuard;
 use crossbeam_utils::CachePadded;
 use std::{
     cell::UnsafeCell,
@@ -13,20 +15,14 @@ use tokio::sync::Notify;
 // Enum used in try_acquire_shard to determine if task
 // is enqueue or dequeue
 #[derive(Debug, PartialEq, Eq)]
-enum Acquire {
+pub enum Acquire {
     Enqueue,
-    EnqueueFull { batch_count: usize },
     Dequeue,
-}
-
-#[derive(Debug)]
-pub enum EnqueueError {
-    Poisoned,
 }
 
 /// A sharded ring (circular) buffer struct that can only be used in an *async environment*.
 #[derive(Debug)]
-pub struct ShardedRingBuf<T> {
+pub struct CSShardedRingBuf<T> {
     /// Total capacity of the buffer
     capacity: AtomicUsize,
     /// Used to determine which shard a thread-task pair should work on
@@ -63,7 +59,7 @@ pub struct ShardedRingBuf<T> {
 
 // An inner ring buffer to contain the items, enqueue and dequeue index for ShardedRingBuf struct
 #[derive(Debug, Default)]
-struct InnerRingBuffer<T> {
+pub(crate) struct InnerRingBuffer<T> {
     /// Box containing the content of the buffer
     items: Box<[UnsafeCell<MaybeUninit<T>>]>,
     /// Where to enqueue at in the Box
@@ -107,8 +103,8 @@ impl<T> InnerRingBuffer<T> {
     }
 }
 
-impl<T> ShardedRingBuf<T> {
-    /// Instantiates ShardedRingBuf
+impl<T> CSShardedRingBuf<T> {
+    /// Instantiates CSShardedRingBuf
     ///
     /// Time Complexity: O(s) where s is the number of shards
     ///
@@ -294,29 +290,31 @@ impl<T> ShardedRingBuf<T> {
             .is_ok()
     }
 
-    /// Release the occupation status of this shard atomically
-    #[inline(always)]
-    fn release_shard(&self, shard_ind: usize) {
-        self.shard_locks[shard_ind].store(false, Ordering::Release);
-    }
-
-    /// Helper function for a task to acquire a specific shard within
-    /// self.shard_locks for enqueuing or dequeuing purposes. Shard acquisition
-    /// is done based on the policy placed inside SHARD_POLICY
+    /// Acquires a lock on the shard for either enqueue or dequeue purposes.
+    /// If the buffer was poisoned, the following effects will happen:
+    /// - Enqueue: return None immediately
+    /// - Dequeue: only returns None if the shard is *empty*
     ///
-    /// Time Complexity: O(s_t) where s_t comes from the consideration below:
-    ///
-    /// The time complexity of this depends on number of enqueuers and
-    /// dequeuers tasks there are, shard count, and shard policies;
-    /// ideally, you would have similar number of enqueuers and dequeuers tasks
-    /// with the number of shards being greater than or equal to
-    /// max(enqueuers task count, dequeurer task count)
-    /// so that each task can find a shard to enqueue or dequeue off from
-    async fn try_acquire_shard(&self, acquire: Acquire, shard_ind: usize) {
+    /// Time Complexity: O(s_t) where s_t is how long it takes to acquire the shard
+    pub async fn acquire_shard_guard(
+        &self,
+        acquire: Acquire,
+        shard_ind: usize,
+    ) -> Option<ShardLockGuard<'_, T>> {
+        let enq_shard_ind = match self.enq_task_count {
+            Some(enq_num) => shard_ind % enq_num,
+            None => shard_ind,
+        };
         loop {
-            // if poisoned and empty, get out of this loop
-            if self.poisoned.load(Ordering::Relaxed) && self.is_shard_empty(shard_ind) {
-                break;
+            if matches!(acquire, Acquire::Enqueue) {
+                if self.poisoned.load(Ordering::Relaxed) {
+                    return None;
+                }
+            } else {
+                // if poisoned and empty, get out of this loop
+                if self.poisoned.load(Ordering::Relaxed) && self.is_shard_empty(shard_ind) {
+                    return None;
+                }
             }
 
             if self.acquire_shard(shard_ind) {
@@ -325,20 +323,6 @@ impl<T> ShardedRingBuf<T> {
                  * are on the shard.
                  */
                 if match acquire {
-                    // for some reason checking if the shard is empty to enqueue full gives pretty stable
-                    // timing performances. the con of doing this way is that you're not using the full
-                    // benefit of enqueuing as much as you can into this shard buffer, but the pro is
-                    // that even in a partial filled state, you let the dequeuer immediately remove the
-                    // items here
-                    // Acquire::EnqueueFull {batch_count: _} => self.is_shard_empty(current),
-
-                    // checking if the shard is unable to contain a batch gives different range of timing
-                    // performance (sometimes better, sometimes worse). My assumption is that it
-                    // has to do with cache hits and misses. that's probs the con here, but the pro
-                    // is that you're able to enqueue the most out of this shard buffer.
-                    Acquire::EnqueueFull { batch_count } => {
-                        !self.is_shard_full_batch(shard_ind, batch_count)
-                    }
                     Acquire::Enqueue => !self.is_shard_full(shard_ind),
                     Acquire::Dequeue => !self.is_shard_empty(shard_ind),
                 } {
@@ -350,31 +334,47 @@ impl<T> ShardedRingBuf<T> {
                      */
                     self.shard_locks[shard_ind].store(false, Ordering::Relaxed);
                     if matches!(acquire, Acquire::Dequeue) {
-                        let enq_shard_ind = match self.enq_task_count {
-                            Some(enq_num) => shard_ind % enq_num,
-                            None => shard_ind,
-                        };
                         self.job_space_shard_notifs[enq_shard_ind].notify_one();
                         self.job_post_shard_notifs[shard_ind].notified().await;
-                        continue;
                     } else {
-                        let enq_shard_ind = match self.enq_task_count {
-                            Some(enq_num) => shard_ind % enq_num,
-                            None => shard_ind,
-                        };
                         self.job_post_shard_notifs[shard_ind].notify_one();
                         self.job_space_shard_notifs[enq_shard_ind].notified().await;
-                        continue;
                     }
+                    continue;
                 }
             }
         }
+        if matches!(acquire, Acquire::Dequeue) {
+            Some(ShardLockGuard::acquire_shard_guard(
+                acquire,
+                &self.shard_locks[shard_ind],
+                &self.job_space_shard_notifs[enq_shard_ind],
+                &self.inner_rb[shard_ind],
+            ))
+        } else {
+            Some(ShardLockGuard::acquire_shard_guard(
+                acquire,
+                &self.shard_locks[shard_ind],
+                &self.job_space_shard_notifs[shard_ind],
+                &self.inner_rb[shard_ind],
+            ))
+        }
     }
 
-    /// Grab inner ring buffer shard, enqueue the item, update the enqueue index
+    /// Given a `ShardLockGuard<'_, T>`, it enqueues an item inside the shard.
+    ///
+    /// If a guard was obtained with the role of dequeuing, this function will panic.
+    ///
+    /// Time Complexity: O(1)
+    ///
+    /// Space Complexity: O(1)
     #[inline(always)]
-    fn enqueue_item_in_shard(&self, shard_ind: usize, item: T) {
-        let inner = &self.inner_rb[shard_ind];
+    pub fn enqueue_item(&self, item: T, shard_guard: ShardLockGuard<'_, T>) {
+        assert!(
+            matches!(shard_guard.role, Acquire::Enqueue),
+            "You must acquire an Enqueue guard through 'enqueue_shard_guard()' or 'acquire_shard_guard' with Acquire::Enqueue."
+        );
+        let inner = shard_guard.shard;
         // we use fetch add here because we want to obtain the previous value
         // to dequeue while also incrementing this counter (separate load and store
         // incurs more cost)
@@ -387,297 +387,51 @@ impl<T> ShardedRingBuf<T> {
         }
     }
 
-    /// Helper function to add an Option item to the RingBuffer
-    /// This is necessary so that the ring buffer can be poisoned with None values
+    /// Obtain a guard on a shard in the ring buffer for the purpose of enqueuing.
+    /// Returns None if the buffer was poisoned.
     ///
     /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
     ///
-    /// Space Complexity: O(1)
-    async fn enqueue_item(&self, item: T, shard_ind: usize) -> Result<(), EnqueueError> {
-        // acquire shard
-        self.try_acquire_shard(Acquire::Enqueue, shard_ind).await;
-
-        // If poisoned, do not enqueue this item.
-        if self.poisoned.load(Ordering::Relaxed) {
-            return Err(EnqueueError::Poisoned);
-        }
-
-        self.enqueue_item_in_shard(shard_ind, item);
-        self.release_shard(shard_ind);
-        self.job_post_shard_notifs[shard_ind].notify_one();
-        Ok(())
-    }
-
-    /// Adds an item of type T to the ring buffer at a provided shard. If the user
-    /// provides a shard index greater than the existing number of shards in the
-    /// buffer, it will perform wrap around (% number of existing shards).
-    ///
-    /// This function will return an EnqueueError::Poisoned if the ring buffer is currently
-    /// poisoned.
-    ///
-    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a slot in a shard
-    /// (this is usually pretty fast)
-    ///
     /// Space complexity: O(1)
-    pub async fn enqueue_in_shard(&self, item: T, shard_ind: usize) -> Result<(), EnqueueError> {
-        if self.poisoned.load(Ordering::Relaxed) {
-            return Err(EnqueueError::Poisoned);
-        }
-        let shard_ind = shard_ind % self.get_num_of_shards();
-        self.enqueue_item(item, shard_ind).await
-    }
-
-    /// Adds an item of type T to the ring buffer. It uses the ring buffer's shard_enq
-    /// field and mods it with the number of existing shards for the buffer to determine
-    /// which shard this enqueue operation will occur at. As a result, if you have multiple
-    /// shards and one enqueuer task repeatedly using enqueue(), it will sweep across the
-    /// shards and place an item in each.
-    ///
-    /// If you intend to have an enqueuer task map to a specific shard, use enqueue_in_shard()
-    /// for more control.
-    ///
-    /// This function will return an EnqueueError::Poisoned if the ring buffer is currently
-    /// poisoned.
-    ///
-    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a slot in the shard.
-    /// (this is usually pretty fast)
-    ///
-    /// Space complexity: O(1)
-    pub async fn enqueue(&self, item: T) -> Result<(), EnqueueError> {
-        let shard_ind = self.shard_enq.fetch_add(1, Ordering::Relaxed) % self.get_num_of_shards();
-        self.enqueue_item(item, shard_ind).await
-    }
-
-    /// Adds a list of T items to the ring buffer at a provided shard. If the user
-    /// provides a shard index greater than the existing number of shards in the
-    /// buffer, it will perform wrap around (% number of existing shards).
-    ///
-    /// Note: The number of items you can batch can only go up to the capacity of the shard.
-    /// Beyond that will cause a panic.
-    ///
-    /// This function will return an EnqueueError::Poisoned if the ring buffer is currently
-    /// poisoned.
-    ///
-    /// Time Complexity: O(s_t * n) where s_t is the time it takes to acquire a shard
-    /// and n is the number of items you are enqueuing
-    ///
-    /// Space Complexity: O(1)
-    pub async fn enqueue_full_in_shard(
-        &self,
-        items: Vec<T>,
-        shard_ind: usize,
-    ) -> Result<(), EnqueueError> {
-        let shard_ind = shard_ind % self.get_num_of_shards();
-        let items_len = items.len();
-        let shard_len = self.inner_rb[shard_ind].items.len();
-        assert!(
-            items_len <= shard_len,
-            "Cannot batch more than {shard_len} at shard index {shard_ind}"
-        );
-
-        // If we have multiple shards or multiple worker threads,
-        // we need to use locking
-        self.try_acquire_shard(
-            Acquire::EnqueueFull {
-                batch_count: items.len(),
-            },
-            shard_ind,
-        )
-        .await;
-        if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
-            return Err(EnqueueError::Poisoned);
-        }
-
-        for item in items {
-            self.enqueue_item_in_shard(shard_ind, item);
-        }
-
-        self.release_shard(shard_ind);
-        self.job_post_shard_notifs[shard_ind].notify_one();
-        Ok(())
-    }
-
-    /// Adds a list of T items to the ring buffer. It uses the ring buffer's shard_enq
-    /// field and mods it with the number of existing shards for the buffer to determine
-    /// which shard this enqueue operation will occur at. As a result, if you have multiple
-    /// shards and one enqueuer task repeatedly using enqueue(), it will sweep across the
-    /// shards and place an item in each.
-    ///
-    /// Note: The number of items you can batch can only go up to the capacity of the shard.
-    /// Beyond that will cause a panic.
-    ///
-    /// This function will return an EnqueueError::Poisoned if the ring buffer is currently
-    /// poisoned.
-    ///
-    /// Time Complexity: O(s_t * n) where s_t is the time it takes to acquire a shard
-    /// and n is the number of items you are enqueuing
-    ///
-    /// Space Complexity: O(1)
-    pub async fn enqueue_full(&self, items: Vec<T>) -> Result<(), EnqueueError> {
-        let shard_ind = self.shard_enq.fetch_add(1, Ordering::Relaxed) % self.get_num_of_shards();
-        let items_len = items.len();
-        let shard_len = self.inner_rb[shard_ind].items.len();
-        assert!(
-            items_len <= shard_len,
-            "Cannot batch more than {shard_len} at shard index {shard_ind}"
-        );
-
-        // If we have multiple shards or multiple worker threads,
-        // we need to use locking
-        self.try_acquire_shard(
-            Acquire::EnqueueFull {
-                batch_count: items.len(),
-            },
-            shard_ind,
-        )
-        .await;
-        if self.poisoned.load(Ordering::Relaxed) && self.is_empty() {
-            return Err(EnqueueError::Poisoned);
-        }
-
-        for item in items {
-            self.enqueue_item_in_shard(shard_ind, item);
-        }
-
-        self.release_shard(shard_ind);
-        self.job_post_shard_notifs[shard_ind].notify_one();
-        Ok(())
-    }
-
-    /// Grab the inner ring buffer shard, dequeue the item, update the dequeue index
     #[inline(always)]
-    fn dequeue_item_in_shard(&self, shard_ind: usize) -> T {
-        let inner = &self.inner_rb[shard_ind];
+    pub async fn enqueue_shard_guard(&self) -> Option<ShardLockGuard<'_, T>> {
+        let shard_ind = self.shard_enq.fetch_add(1, Ordering::Relaxed) % self.get_num_of_shards();
+        self.acquire_shard_guard(Acquire::Enqueue, shard_ind).await
+    }
+
+    /// Given a `ShardLockGuard<'_, T>`, it dequeues an item inside the shard.
+    ///
+    /// If a guard was obtained with the role of enqueuing, this function will panic.
+    ///
+    /// Time Complexity: O(1)
+    ///
+    /// Space Complexity: O(1)
+    #[inline(always)]
+    pub fn dequeue_item(&self, shard_guard: ShardLockGuard<'_, T>) -> T {
+        assert!(
+            matches!(shard_guard.role, Acquire::Dequeue),
+            "You must acquire a Dequeue guard through 'dequeue_shard_guard()' or 'acquire_shard_guard' with Acquire::Dequeue."
+        );
+
+        let inner = shard_guard.shard;
         // we use fetch add here because we want to obtain the previous value
         // to dequeue while also incrementing this counter (separate load and store
         // incurs more cost)
         let dequeue_index = inner.dequeue_index.fetch_add(1, Ordering::Relaxed) % inner.items.len();
-
         let item_cell = inner.items[dequeue_index].get();
-
         unsafe { (*item_cell).assume_init_read() }
     }
 
-    /// Retrieves an item of type T from the ring buffer. If the user
-    /// provides a shard index greater than the existing number of shards in the
-    /// buffer, it will perform wrap around (% number of existing shards). On a poison pill,
-    /// this method will return None.
+    /// Obtain a guard on a shard in the ring buffer for the purpose of dequeuing.
+    /// Returns None if the buffer was poisoned and the shard contains no more items.
     ///
-    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a slot in the shard
+    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
     ///
     /// Space Complexity: O(1)
     #[inline(always)]
-    pub async fn dequeue_in_shard(&self, shard_ind: usize) -> Option<T> {
-        let shard_ind = shard_ind % self.get_num_of_shards();
-        self.try_acquire_shard(Acquire::Dequeue, shard_ind).await;
-
-        if self.poisoned.load(Ordering::Relaxed) && self.is_shard_empty(shard_ind) {
-            return None;
-        }
-
-        let item = self.dequeue_item_in_shard(shard_ind);
-        self.release_shard(shard_ind);
-
-        let shard_ind = match self.enq_task_count {
-            Some(enq_num) => shard_ind % enq_num,
-            None => shard_ind,
-        };
-        self.job_space_shard_notifs[shard_ind].notify_one();
-
-        Some(item)
-    }
-
-    /// Retrieves an item of type T from the RingBuffer if an item exists in the buffer.
-    /// If the ring buffer is set with a poisoned flag or received a poison pill,
-    /// this method will return None.
-    ///
-    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
-    ///
-    /// Space Complexity: O(1)
-    pub async fn dequeue(&self) -> Option<T> {
+    pub async fn dequeue_shard_guard(&self) -> Option<ShardLockGuard<'_, T>> {
         let shard_ind = self.shard_deq.fetch_add(1, Ordering::Relaxed) % self.get_num_of_shards();
-        self.try_acquire_shard(Acquire::Dequeue, shard_ind).await;
-
-        if self.poisoned.load(Ordering::Relaxed) && self.is_shard_empty(shard_ind) {
-            return None;
-        }
-
-        let item = self.dequeue_item_in_shard(shard_ind);
-        self.release_shard(shard_ind);
-
-        let shard_ind = match self.enq_task_count {
-            Some(enq_num) => shard_ind % enq_num,
-            None => shard_ind,
-        };
-        self.job_space_shard_notifs[shard_ind].notify_one();
-
-        Some(item)
-    }
-
-    /// Retrieves an item of type T from the RingBuffer if an item exists in the buffer.
-    /// If the ring buffer is set with a poisoned flag or received a poison pill,
-    /// this method will return None.
-    ///
-    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
-    ///
-    /// Space Complexity: O(1)
-    pub async fn dequeue_full_in_shard(&self, shard_ind: usize) -> Option<Vec<T>> {
-        let shard_ind = shard_ind % self.get_num_of_shards();
-        self.try_acquire_shard(Acquire::Dequeue, shard_ind).await;
-
-        if self.poisoned.load(Ordering::Relaxed) && self.is_shard_empty(shard_ind) {
-            return None;
-        }
-
-        let mut vec_items = Vec::new();
-
-        while !self.is_shard_empty(shard_ind) {
-            let item = self.dequeue_item_in_shard(shard_ind);
-            vec_items.push(item);
-        }
-
-        self.release_shard(shard_ind);
-
-        let shard_ind = match self.enq_task_count {
-            Some(enq_num) => shard_ind % enq_num,
-            None => shard_ind,
-        };
-        self.job_space_shard_notifs[shard_ind].notify_one();
-
-        Some(vec_items)
-    }
-
-    /// Retrieves an item of type T from the RingBuffer if an item exists in the buffer.
-    /// If the ring buffer is set with a poisoned flag or received a poison pill,
-    /// this method will return None.
-    ///
-    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
-    ///
-    /// Space Complexity: O(1)
-    pub async fn dequeue_full(&self) -> Option<Vec<T>> {
-        let shard_ind = self.shard_deq.fetch_add(1, Ordering::Relaxed) % self.get_num_of_shards();
-        self.try_acquire_shard(Acquire::Dequeue, shard_ind).await;
-
-        if self.poisoned.load(Ordering::Relaxed) && self.is_shard_empty(shard_ind) {
-            return None;
-        }
-
-        let mut vec_items = Vec::new();
-
-        while !self.is_shard_empty(shard_ind) {
-            let item = self.dequeue_item_in_shard(shard_ind);
-            vec_items.push(item);
-        }
-
-        self.release_shard(shard_ind);
-
-        let shard_ind = match self.enq_task_count {
-            Some(enq_num) => shard_ind % enq_num,
-            None => shard_ind,
-        };
-        self.job_space_shard_notifs[shard_ind].notify_one();
-
-        Some(vec_items)
+        self.acquire_shard_guard(Acquire::Dequeue, shard_ind).await
     }
 
     /// Sets the poison flag of the ring buffer to true. This will prevent enqueuers
@@ -849,25 +603,6 @@ impl<T> ShardedRingBuf<T> {
         );
         let jobs = enq_ind.wrapping_sub(deq_ind);
         jobs == item_len
-    }
-
-    /// Checks to see if a specific shard is able to support batching a
-    /// certain number of items
-    ///
-    /// Time Complexity: O(1)
-    ///
-    /// Space Complexity: O(1)
-    #[inline(always)]
-    pub fn is_shard_full_batch(&self, shard_ind: usize, batch_count: usize) -> bool {
-        let inner = &self.inner_rb[shard_ind];
-        let item_len = inner.items.len();
-        // use these values as monotonic counter than indices
-        let (enq_ind, deq_ind) = (
-            inner.enqueue_index.load(Ordering::Relaxed),
-            inner.dequeue_index.load(Ordering::Relaxed),
-        );
-        let jobs = enq_ind.wrapping_sub(deq_ind);
-        item_len - jobs < batch_count
     }
 
     /// Gets the enqueue index within a shard. Returns None if the shard
@@ -1191,8 +926,8 @@ impl<T> ShardedRingBuf<T> {
     }
 }
 
-unsafe impl<T> Sync for ShardedRingBuf<T> {}
-unsafe impl<T> Send for ShardedRingBuf<T> {}
+unsafe impl<T> Sync for CSShardedRingBuf<T> {}
+unsafe impl<T> Send for CSShardedRingBuf<T> {}
 
 unsafe impl<T> Sync for InnerRingBuffer<T> {}
 unsafe impl<T> Send for InnerRingBuffer<T> {}

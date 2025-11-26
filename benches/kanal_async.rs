@@ -1,5 +1,5 @@
+#[allow(unused)]
 use std::time::{Duration, Instant};
-
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use kanal::bounded_async;
 use tokio::task;
@@ -99,7 +99,7 @@ async fn kanal_async(c: usize, task_count: usize) {
             // for _ in 0..task_count {
             // for _ in 0..10_000_000 {
             for _ in 0..10_000_000 / task_count {
-                let x = rx.recv().await.unwrap();
+                let _x = rx.recv().await.unwrap();
                 // test_func(x as u128);
             }
             // }

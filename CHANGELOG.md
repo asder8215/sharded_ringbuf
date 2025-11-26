@@ -1,5 +1,7 @@
 # Change for shardedringbuf:
 
+## In v0.4.0:
+
 ## In v0.3.0:
 * `ShardedRingBuf<T>` has a new instance method `new_with_enq_num` for the purpose of using the buffer knowing how many
 enqueue tasks a user will spawn (useful for SPMC or if enqueuer tasks < num of shards) and distributing notifications to

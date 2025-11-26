@@ -22,11 +22,12 @@ tokio = {version = "^1.45.1", features = ["rt", "sync"] }
 futures-util = {version = "^0.3.31", optional = true}
 
 [features]
+cs_srb = []
 srb = []
 mlf_srb = []
 exp_srb = ["fastrand", "futures-util"]
-default = ["srb", "mlf_srb"]
-all = ["srb", "mlf_srb"]
+default = ["srb", "mlf_srb", "cs_srb",]
+all = ["srb", "mlf_srb", "cs_srb",]
 
 [dev-dependencies]
 criterion = {version = "^0.6.0", features =["async_tokio"] }
@@ -36,6 +37,10 @@ async-channel = "2.5.0"
 crossbeam = "0.8"
 flume = {version="0.11", features= ["async"] }
 smol = "2.0.2"
+
+[[bench]]
+name = "cs_srb"
+harness = false
 
 [[bench]]
 name = "srb"
