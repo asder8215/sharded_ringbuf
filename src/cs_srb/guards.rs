@@ -28,8 +28,9 @@ impl<'a, T> ShardLockGuard<'a, T> {
     }
 }
 
-/// The guard can go out of scope and it'll automatically
-/// unlock the shard + notify the opposing task type
+/// The drop implementation of this guard will automatically
+/// unlock the shard + notify the opposing task type when
+/// it goes out of scope
 impl<T> Drop for ShardLockGuard<'_, T> {
     #[inline(always)]
     fn drop(&mut self) {
