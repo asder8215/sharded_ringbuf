@@ -46,6 +46,6 @@ pub mod mlf_srb;
 #[cfg(feature = "srb")]
 pub mod srb;
 
-// A 100% cancel safe version of ShardedRingBuf using guards
+/// A 100% cancel safe version of ShardedRingBuf using guards
 #[cfg(feature = "cs_srb")]
 pub mod cs_srb;

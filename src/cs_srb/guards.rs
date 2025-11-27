@@ -2,14 +2,11 @@ use crate::cs_srb::{Acquire, InnerRingBuffer};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Notify;
 
-/// This is a guard for all the shards in LFShardedRingBuf struct
-/// Implemented to make certain functions cancel-safe
-///
-/// NOTE: These guards can't make it cancel safe :/
-/// So all of these is just fluff
+/// This is a guard for all the shards in CSShardedRingBuf struct
+/// to make it cancel safe.
 pub struct ShardLockGuard<'a, T> {
     pub(crate) role: Acquire,
-    lock: &'a AtomicBool, // lifetime of the lock is necessary to drop the lock on task abortion
+    lock: &'a AtomicBool,
     notify: &'a Notify,
     pub(crate) shard: &'a InnerRingBuffer<T>,
 }
@@ -31,8 +28,8 @@ impl<'a, T> ShardLockGuard<'a, T> {
     }
 }
 
-/// The beauty of this is now I can I just let my locks go out of
-/// scope and it'll automatically drop it
+/// The guard can go out of scope and it'll automatically
+/// unlock the shard + notify the opposing task type
 impl<T> Drop for ShardLockGuard<'_, T> {
     #[inline(always)]
     fn drop(&mut self) {

@@ -12,8 +12,8 @@ use std::{
 };
 use tokio::sync::Notify;
 
-// Enum used in try_acquire_shard to determine if task
-// is enqueue or dequeue
+/// This enum is used to declare whether you are enqueuing
+/// or dequeuing an item for `acquire_shard_guard()`
 #[derive(Debug, PartialEq, Eq)]
 pub enum Acquire {
     Enqueue,

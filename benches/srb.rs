@@ -116,7 +116,8 @@ async fn srb_bench(capacity: usize, shards: usize, task_count: usize) {
                     if counter != 0 && counter % full_enq == 0 {
                         // let _ = rb_clone.enqueue_full_in_shard(enq_vec, i).await;
                         // let _ = rb_clone.enqueue_full(enq_vec).await;
-                        let _ = rb_clone.enqueue(enq_vec).await;
+                        // let _ = rb_clone.enqueue(enq_vec).await;
+                        let _ = rb_clone.enqueue_in_shard(enq_vec, _i).await;
                         enq_vec = Vec::with_capacity(full_enq);
                         enq_vec.push(item);
                         counter += 1;
@@ -128,7 +129,8 @@ async fn srb_bench(capacity: usize, shards: usize, task_count: usize) {
                 if !enq_vec.is_empty() {
                     // let _ = rb_clone.enqueue_full_in_shard(enq_vec, i).await;
                     // let _ = rb_clone.enqueue_full(enq_vec).await;
-                    let _ = rb_clone.enqueue(enq_vec).await;
+                    // let _ = rb_clone.enqueue(enq_vec).await;
+                    let _ = rb_clone.enqueue_in_shard(enq_vec, _i).await;
                 }
             }
         });
