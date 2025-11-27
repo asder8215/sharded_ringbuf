@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 #[allow(unused)]
 use std::time::{Duration, Instant};
 
@@ -11,6 +13,7 @@ async fn cssrb_bench(capacity: usize, shards: usize, task_count: usize) {
     let max_items: usize = capacity;
     let rb = CSShardedRingBuf::new_with_enq_num(max_items, shards, task_count);
 
+    // let counter = Arc::new(AtomicUsize::new(0));
     let mut deq_tasks = Vec::with_capacity(shards);
     let mut enq_tasks = Vec::with_capacity(task_count);
 
@@ -52,6 +55,7 @@ async fn cssrb_bench(capacity: usize, shards: usize, task_count: usize) {
     for i in 0..shards {
         let handle = tokio::spawn({
             let rb_clone = rb.clone();
+            // let counter_clone = counter.clone();
             async move {
                 loop {
                     let guard = rb_clone
@@ -62,6 +66,7 @@ async fn cssrb_bench(capacity: usize, shards: usize, task_count: usize) {
                         Some(guard) => {
                             for _j in rb_clone.dequeue_item(guard) {
                                 // println!("{j}");
+                                // counter_clone.fetch_add(1, Ordering::Relaxed);
                             }
                         }
                         None => break,
@@ -97,6 +102,7 @@ async fn cssrb_bench(capacity: usize, shards: usize, task_count: usize) {
         deq.await.unwrap();
     }
 
+    // println!("{}", counter.load(Ordering::Relaxed));
     notifier_task.abort();
 }
 
