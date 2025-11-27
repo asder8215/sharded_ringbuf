@@ -348,15 +348,15 @@ impl<T> CSShardedRingBuf<T> {
             Some(ShardLockGuard::acquire_shard_guard(
                 acquire,
                 &self.shard_locks[shard_ind],
-                &self.job_space_shard_notifs[shard_ind],
+                &self.job_space_shard_notifs[enq_shard_ind],
                 &self.inner_rb[shard_ind],
             ))
         } else {
             Some(ShardLockGuard::acquire_shard_guard(
                 acquire,
-                &self.shard_locks[enq_shard_ind],
-                &self.job_post_shard_notifs[enq_shard_ind],
-                &self.inner_rb[enq_shard_ind],
+                &self.shard_locks[shard_ind],
+                &self.job_post_shard_notifs[shard_ind],
+                &self.inner_rb[shard_ind],
             ))
         }
     }
