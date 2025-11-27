@@ -28,7 +28,9 @@ async fn cssrb_bench(capacity: usize, shards: usize, task_count: usize) {
                 for item in items {
                     if counter != 0 && counter % full_enq == 0 {
                         // let guard = rb_clone.enqueue_shard_guard().await;
-                        let guard = rb_clone.acquire_shard_guard(cs_srb::Acquire::Enqueue, _i).await;
+                        let guard = rb_clone
+                            .acquire_shard_guard(cs_srb::Acquire::Enqueue, _i)
+                            .await;
                         match guard {
                             None => break,
                             Some(guard) => rb_clone.enqueue_item(enq_vec, guard),
@@ -43,7 +45,9 @@ async fn cssrb_bench(capacity: usize, shards: usize, task_count: usize) {
                 }
                 if !enq_vec.is_empty() {
                     // let guard = rb_clone.enqueue_shard_guard().await;
-                    let guard = rb_clone.acquire_shard_guard(cs_srb::Acquire::Enqueue, _i).await;
+                    let guard = rb_clone
+                        .acquire_shard_guard(cs_srb::Acquire::Enqueue, _i)
+                        .await;
                     match guard {
                         None => {}
                         Some(guard) => rb_clone.enqueue_item(enq_vec, guard),
