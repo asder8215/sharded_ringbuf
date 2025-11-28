@@ -15,7 +15,7 @@ use tokio::sync::Notify;
 /// This enum is used to declare whether you are enqueuing
 /// or dequeuing an item for `acquire_shard_guard()`
 #[derive(Debug, PartialEq, Eq)]
-pub enum Acquire {
+enum Acquire {
     Enqueue,
     Dequeue,
 }
@@ -296,7 +296,8 @@ impl<T> CSShardedRingBuf<T> {
     /// - Dequeue: only returns None if the shard is *empty*
     ///
     /// Time Complexity: O(s_t) where s_t is how long it takes to acquire the shard
-    pub async fn acquire_shard_guard(
+    #[inline]
+    async fn acquire_shard_guard(
         &self,
         acquire: Acquire,
         shard_ind: usize,
@@ -346,14 +347,12 @@ impl<T> CSShardedRingBuf<T> {
         }
         if matches!(acquire, Acquire::Dequeue) {
             Some(ShardLockGuard::acquire_shard_guard(
-                acquire,
                 &self.shard_locks[shard_ind],
                 &self.job_space_shard_notifs[enq_shard_ind],
                 &self.inner_rb[shard_ind],
             ))
         } else {
             Some(ShardLockGuard::acquire_shard_guard(
-                acquire,
                 &self.shard_locks[shard_ind],
                 &self.job_post_shard_notifs[shard_ind],
                 &self.inner_rb[shard_ind],
@@ -363,17 +362,14 @@ impl<T> CSShardedRingBuf<T> {
 
     /// Given a `ShardLockGuard<'_, T>`, it enqueues an item inside the shard.
     ///
-    /// If a guard was obtained with the role of dequeuing, this function will panic.
+    /// You must obtain a ShardLockGuard<'_, T> from either `enqueue_guard()`
+    /// or `enqueue_guard_in_shard()`
     ///
     /// Time Complexity: O(1)
     ///
     /// Space Complexity: O(1)
     #[inline(always)]
-    pub fn enqueue_item(&self, item: T, shard_guard: ShardLockGuard<'_, T>) {
-        assert!(
-            matches!(shard_guard.role, Acquire::Enqueue),
-            "You must acquire an Enqueue guard through 'enqueue_shard_guard()' or 'acquire_shard_guard' with Acquire::Enqueue."
-        );
+    pub fn enqueue(&self, item: T, shard_guard: ShardLockGuard<'_, T>) {
         let inner = shard_guard.shard;
         // we use fetch add here because we want to obtain the previous value
         // to dequeue while also incrementing this counter (separate load and store
@@ -387,32 +383,43 @@ impl<T> CSShardedRingBuf<T> {
         }
     }
 
-    /// Obtain a guard on a shard in the ring buffer for the purpose of enqueuing.
+    /// Obtain a guard on a specific shard the ring buffer for the purpose of
+    /// enqueuing.
+    ///
     /// Returns None if the buffer was poisoned.
     ///
     /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
     ///
     /// Space complexity: O(1)
     #[inline(always)]
-    pub async fn enqueue_shard_guard(&self) -> Option<ShardLockGuard<'_, T>> {
+    pub async fn enqueue_guard_in_shard(&self, shard_ind: usize) -> Option<ShardLockGuard<'_, T>> {
+        self.acquire_shard_guard(Acquire::Enqueue, shard_ind).await
+    }
+
+    /// Obtain a guard on a shard the ring buffer for the purpose of enqueuing.
+    ///
+    /// Returns None if the buffer was poisoned.
+    ///
+    /// Note: It obtains the shard in a circular manner, so for example, at the beginning,
+    /// it obtains shard 0, then shard 1, the shard 2, ... (all modded with the number
+    /// of shards that exists in this buffer)
+    ///
+    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
+    ///
+    /// Space complexity: O(1)
+    #[inline(always)]
+    pub async fn enqueue_guard(&self) -> Option<ShardLockGuard<'_, T>> {
         let shard_ind = self.shard_enq.fetch_add(1, Ordering::Relaxed) % self.get_num_of_shards();
         self.acquire_shard_guard(Acquire::Enqueue, shard_ind).await
     }
 
     /// Given a `ShardLockGuard<'_, T>`, it dequeues an item inside the shard.
     ///
-    /// If a guard was obtained with the role of enqueuing, this function will panic.
-    ///
     /// Time Complexity: O(1)
     ///
     /// Space Complexity: O(1)
     #[inline(always)]
-    pub fn dequeue_item(&self, shard_guard: ShardLockGuard<'_, T>) -> T {
-        assert!(
-            matches!(shard_guard.role, Acquire::Dequeue),
-            "You must acquire a Dequeue guard through 'dequeue_shard_guard()' or 'acquire_shard_guard' with Acquire::Dequeue."
-        );
-
+    fn dequeue_item(&self, shard_guard: ShardLockGuard<'_, T>) -> T {
         let inner = shard_guard.shard;
         // we use fetch add here because we want to obtain the previous value
         // to dequeue while also incrementing this counter (separate load and store
@@ -422,16 +429,42 @@ impl<T> CSShardedRingBuf<T> {
         unsafe { (*item_cell).assume_init_read() }
     }
 
-    /// Obtain a guard on a shard in the ring buffer for the purpose of dequeuing.
+    /// Performs both the operation of obtaining a guard on a shard in the ring buffer
+    /// and dequeuing an item off from the buffer. This can be done like together because
+    /// due to inherent cancellation safety (data either stays in buffer on cancellation
+    /// or it gets taken out without touching an await point).
+    ///
     /// Returns None if the buffer was poisoned and the shard contains no more items.
     ///
     /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
     ///
     /// Space Complexity: O(1)
     #[inline(always)]
-    pub async fn dequeue_shard_guard(&self) -> Option<ShardLockGuard<'_, T>> {
+    pub async fn dequeue_in_shard(&self, shard_ind: usize) -> Option<T> {
+        let shard_guard = self.acquire_shard_guard(Acquire::Dequeue, shard_ind).await;
+        shard_guard.map(|guard| self.dequeue_item(guard))
+    }
+
+    /// Performs both the operation of obtaining a guard on a shard in the ring buffer
+    /// and dequeuing an item off from the buffer. This can be done like together because
+    /// due to inherent cancellation safety (data either stays in buffer on cancellation
+    /// or it gets taken out without touching an await point).
+    ///
+    /// Returns None if the buffer was poisoned and the shard contains no more items.
+    ///
+    /// Note: It obtains the shard in a circular manner, so for example, at the beginning,
+    /// it obtains shard 0, then shard 1, the shard 2, ... (all modded with the number
+    /// of shards that exists in this buffer)
+    ///
+    /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
+    ///
+    /// Space Complexity: O(1)
+    #[inline(always)]
+    pub async fn dequeue(&self) -> Option<T> {
         let shard_ind = self.shard_deq.fetch_add(1, Ordering::Relaxed) % self.get_num_of_shards();
-        self.acquire_shard_guard(Acquire::Dequeue, shard_ind).await
+        let shard_guard = self.acquire_shard_guard(Acquire::Dequeue, shard_ind).await;
+
+        shard_guard.map(|guard| self.dequeue_item(guard))
     }
 
     /// Sets the poison flag of the ring buffer to true. This will prevent enqueuers

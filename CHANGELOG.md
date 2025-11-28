@@ -1,5 +1,13 @@
 # Change for shardedringbuf:
 
+## In v0.5.0:
+* Removed access to `acquire_shard_guard()`. Instead, users should use `enqueue_guard_in_shard()` for obtaining
+a guard for enqueuing. Dequeue does not face this consequence because it's attempt on obtaining a guard internally
+does not cause a cancel safety issue on data being lost; as a result, users can just directly obtain an item through
+`dequeue_in_shard()` or `dequeue()`
+* Reduced the `ShardLockGuard<'a, T>` size from 32 bytes to 24 bytes (got rid of an unnecessary enum relating to first
+bullet point).
+
 ## In v0.4.0:
 * Added `CSShardedRingBuf<T>`, which is a 100% cancel safe version of `ShardedRingBuf<T>`. Users need
 to acquire a guard on the shard first in an async manner before passing ownership of their item to the

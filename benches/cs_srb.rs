@@ -4,7 +4,7 @@
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use sharded_ringbuf::cs_srb::{self, CSShardedRingBuf};
+use sharded_ringbuf::cs_srb::CSShardedRingBuf;
 use tokio::spawn;
 use tokio::task::yield_now;
 
@@ -28,12 +28,10 @@ async fn cssrb_bench(capacity: usize, shards: usize, task_count: usize) {
                 for item in items {
                     if counter != 0 && counter % full_enq == 0 {
                         // let guard = rb_clone.enqueue_shard_guard().await;
-                        let guard = rb_clone
-                            .acquire_shard_guard(cs_srb::Acquire::Enqueue, _i)
-                            .await;
+                        let guard = rb_clone.enqueue_guard_in_shard(_i).await;
                         match guard {
                             None => break,
-                            Some(guard) => rb_clone.enqueue_item(enq_vec, guard),
+                            Some(guard) => rb_clone.enqueue(enq_vec, guard),
                         }
                         enq_vec = Vec::with_capacity(full_enq);
                         enq_vec.push(item);
@@ -45,12 +43,10 @@ async fn cssrb_bench(capacity: usize, shards: usize, task_count: usize) {
                 }
                 if !enq_vec.is_empty() {
                     // let guard = rb_clone.enqueue_shard_guard().await;
-                    let guard = rb_clone
-                        .acquire_shard_guard(cs_srb::Acquire::Enqueue, _i)
-                        .await;
+                    let guard = rb_clone.enqueue_guard_in_shard(_i).await;
                     match guard {
                         None => {}
-                        Some(guard) => rb_clone.enqueue_item(enq_vec, guard),
+                        Some(guard) => rb_clone.enqueue(enq_vec, guard),
                     }
                 }
             }
@@ -64,13 +60,11 @@ async fn cssrb_bench(capacity: usize, shards: usize, task_count: usize) {
             // let counter_clone = counter.clone();
             async move {
                 loop {
-                    let guard = rb_clone
-                        .acquire_shard_guard(cs_srb::Acquire::Dequeue, i)
-                        .await;
+                    let items = rb_clone.dequeue_in_shard(i).await;
                     // match rb_clone.dequeue_full_in_shard(i).await {
-                    match guard {
-                        Some(guard) => {
-                            for _j in rb_clone.dequeue_item(guard) {
+                    match items {
+                        Some(items) => {
+                            for _j in items {
                                 // println!("{j}");
                                 // counter_clone.fetch_add(1, Ordering::Relaxed);
                             }
