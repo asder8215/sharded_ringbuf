@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use sharded_ringbuf::cs_srb::CSShardedRingBuf;
-use tokio::spawn;
-use tokio::task::yield_now;
+// use tokio::spawn;
+// use tokio::task::yield_now;
 
 #[allow(dead_code)]
 async fn cssrb_bench(capacity: usize, shards: usize, task_count: usize) {
@@ -85,17 +85,21 @@ async fn cssrb_bench(capacity: usize, shards: usize, task_count: usize) {
     rb.poison();
 
     // necessary for poison
-    let notifier_task = spawn({
-        let rb_clone = rb.clone();
-        async move {
-            loop {
-                for i in 0..shards {
-                    rb_clone.notify_dequeuer_in_shard(i % rb_clone.get_num_of_shards());
-                }
-                yield_now().await;
-            }
-        }
-    });
+    // let notifier_task = spawn({
+    //     let rb_clone = rb.clone();
+    //     async move {
+    //         loop {
+    //             for i in 0..shards {
+    //                 rb_clone.notify_dequeuer_in_shard(i % rb_clone.get_num_of_shards());
+    //             }
+    //             yield_now().await;
+    //         }
+    //     }
+    // });
+
+    for i in 0..shards {
+        rb.notify_dequeuer_in_shard(i % rb.get_num_of_shards());
+    }
 
     // Wait for dequeuers
     for deq in deq_tasks {
@@ -103,7 +107,7 @@ async fn cssrb_bench(capacity: usize, shards: usize, task_count: usize) {
     }
 
     // println!("{}", counter.load(Ordering::Relaxed));
-    notifier_task.abort();
+    // notifier_task.abort();
 }
 
 fn benchmark_cssrb(c: &mut Criterion) {
