@@ -874,7 +874,7 @@ dependencies = [
 
 [[package]]
 name = "sharded_ringbuf"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "async-channel",
  "criterion",
