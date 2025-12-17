@@ -384,9 +384,10 @@ impl<T> CSShardedRingBuf<T> {
     }
 
     /// Obtain a guard on a specific shard the ring buffer for the purpose of
-    /// enqueuing.
+    /// enqueuing. Returns None if the buffer was poisoned.
     ///
-    /// Returns None if the buffer was poisoned.
+    /// Note: This function will PANIC if you specify a shard index out of
+    /// bound from the number of shards that you have.
     ///
     /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
     ///
@@ -435,6 +436,9 @@ impl<T> CSShardedRingBuf<T> {
     /// or it gets taken out without touching an await point).
     ///
     /// Returns None if the buffer was poisoned and the shard contains no more items.
+    ///  
+    /// Note: This function will PANIC if you specify a shard index out of
+    /// bound from the number of shards that you have.
     ///
     /// Time Complexity: O(s_t) where s_t is the time it takes to acquire a shard
     ///
@@ -469,8 +473,14 @@ impl<T> CSShardedRingBuf<T> {
 
     /// Sets the poison flag of the ring buffer to true. This will prevent enqueuers
     /// from enqueuing anymore jobs if this method is called while enqueues are occuring.
-    /// However you can use this if you want graceful exit of dequeuers tasks completing
-    /// all available jobs enqueued first before exiting.
+    /// This allows for graceful exit of dequeuers tasks as it completes all available jobs
+    /// enqueued first.
+    ///
+    /// Important Note: To ensure all dequeuer tasks terminate
+    /// gracefully after the buffer has been poisoned, you need to
+    /// call on `notify_dequeuer_in_shard()` on each shard with a
+    /// dequeuer task pinned to it (and multiple times if there are
+    /// multiple dequeuer task in a shard).
     ///
     /// Time Complexity: O(1)
     ///
@@ -506,27 +516,6 @@ impl<T> CSShardedRingBuf<T> {
     /// Time Complexity: O(s) where s is the number of shards
     ///
     /// Space Complexity: O(1)
-    ///
-    /// Important Note: When you want all dequeuer tasks to terminate
-    /// gracefully after the buffer has been poisoned, you need to
-    /// spawn a "notifier_task" that looks like this.
-    /// ```no_run
-    /// let notifier_task: JoinHandle<()> = tokio::spawn({
-    ///     let rb_clone: Arc<ShardedRingBuf<T>> = rb.clone();
-    ///     async move {
-    ///         loop {
-    ///             for i in 0..rb_clone.get_num_of_shards() {
-    ///                 rb_clone.notify_pin_shard(i)
-    ///             }
-    ///             yield_now().await;
-    ///          }
-    ///     }
-    /// })
-    /// ```
-    /// You can then terminate this task with `.abort()` later on after ensuring
-    /// that all dequeuer tasks have terminated. The unfortunate part is that graceful
-    /// termination of dequeuer tasks in a nonblocking manner for this buffer relies on
-    /// whether the async runtime you are using has an equivalent `yield_now().await` function.
     #[inline(always)]
     pub fn notify_dequeuer_in_shard(&self, shard_ind: usize) {
         assert!(
